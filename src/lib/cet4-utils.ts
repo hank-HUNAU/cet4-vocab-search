@@ -8,6 +8,7 @@ import type {
   CET4Data,
   BlankAnnotation,
   KnowledgePoint,
+  QuestionTypeRegistry,
 } from "@/data/cet4-data";
 
 // ─── Sub-category frequency mapping ─────────────────────────────────
@@ -90,6 +91,83 @@ export function calculateDifficulty(knowledgePoints: KnowledgePoint[]): number {
 
 export function getFrequency(subCategory: string): Frequency {
   return subCategoryFrequency[subCategory] || "低频";
+}
+
+// ─── Default metadata and question_types ────────────────────────────
+
+const DEFAULT_QUESTION_TYPES: QuestionTypeRegistry[] = [
+  {
+    id: "banked_cloze",
+    label: "词汇匹配（选词填空）",
+    description: "从15个词中选出10个填入文章空白处，考查词汇语法综合运用能力",
+  },
+  {
+    id: "reading_comprehension",
+    label: "阅读理解",
+    description: "阅读文章并回答问题，考查阅读理解能力",
+  },
+  {
+    id: "listening",
+    label: "听力理解",
+    description: "听取录音并回答问题，考查听力理解能力",
+  },
+  {
+    id: "translation",
+    label: "段落翻译",
+    description: "将中文段落翻译为英文，考查翻译能力",
+  },
+  {
+    id: "writing",
+    label: "写作",
+    description: "根据提示写一篇短文，考查写作能力",
+  },
+];
+
+// ─── Normalize uploaded data to CET4Data format ──────────────────────
+// Handles multiple JSON formats and ensures all required fields exist
+
+export function normalizeToCET4Data(raw: unknown): CET4Data {
+  const obj = (typeof raw === "object" && raw !== null) ? raw as Record<string, unknown> : {};
+
+  // Ensure metadata exists
+  const existingMeta = (obj.metadata && typeof obj.metadata === "object")
+    ? obj.metadata as Record<string, unknown>
+    : {};
+  const metadata = {
+    exam_year: (existingMeta.exam_year ?? obj.exam_year ?? 0) as number,
+    exam_month: (existingMeta.exam_month ?? obj.exam_month ?? 0) as number,
+    total_sets: (existingMeta.total_sets ?? obj.total_sets ?? 0) as number,
+    annotation_version: (existingMeta.annotation_version ?? obj.annotation_version ?? "2.0") as string,
+  };
+  // Fix total_sets if zero but sets exist
+  if (metadata.total_sets === 0 && Array.isArray(obj.sets)) {
+    metadata.total_sets = (obj.sets as unknown[]).length;
+  }
+
+  // Ensure question_types exists
+  const question_types: QuestionTypeRegistry[] =
+    (Array.isArray(obj.question_types) && (obj.question_types as unknown[]).length > 0)
+      ? obj.question_types as QuestionTypeRegistry[]
+      : DEFAULT_QUESTION_TYPES;
+
+  // Ensure sets exists
+  let sets;
+  if (Array.isArray(obj.sets) && obj.sets.length > 0) {
+    sets = obj.sets as CET4Data["sets"];
+  } else if (obj.word_bank && obj.passage) {
+    // Format 2: Single set - wrap into CET4Data format
+    sets = [{
+      set_id: 1,
+      theme: (obj as Record<string, unknown>).theme as string || "未命名套题",
+      question_type: "banked_cloze" as const,
+      word_bank: obj.word_bank as CET4Data["sets"][0]["word_bank"],
+      passage: obj.passage as CET4Data["sets"][0]["passage"],
+    }];
+  } else {
+    sets = [];
+  }
+
+  return { metadata, question_types, sets };
 }
 
 // ─── Enrich CET4Data: add missing difficulty/frequency fields ────────

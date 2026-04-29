@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { cet4Data, type CET4Data } from "@/data/cet4-data";
-import { enrichCET4Data } from "@/lib/cet4-utils";
+import { enrichCET4Data, normalizeToCET4Data } from "@/lib/cet4-utils";
 
 // ─── Dataset type (matches the API response) ────────────────────────
 
@@ -103,8 +103,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (!json.success) {
           throw new Error(json.error || "加载失败");
         }
-        const parsed = JSON.parse(json.data.data);
-        const enriched = enrichCET4Data(parsed as CET4Data);
+        const rawParsed = JSON.parse(json.data.data);
+        // Normalize: ensure metadata, question_types, sets all exist
+        const normalized = normalizeToCET4Data(rawParsed);
+        const enriched = enrichCET4Data(normalized);
         setData(enriched);
         setCurrentDatasetId(id);
       } catch (err) {

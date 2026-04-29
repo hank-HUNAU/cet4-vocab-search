@@ -1738,7 +1738,7 @@ function DataSourceSelector() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__default__">
-                  📦 内置数据 ({data.metadata.exam_year}年{data.metadata.exam_month}月)
+                  📦 内置数据{data.metadata.exam_year ? ` (${data.metadata.exam_year}年${data.metadata.exam_month}月)` : ""}
                 </SelectItem>
                 {datasets.map((ds) => (
                   <SelectItem key={ds.id} value={ds.id}>
@@ -1762,7 +1762,7 @@ function DataSourceSelector() {
                 {isDefaultData ? "内置数据" : "自定义数据"}
               </Badge>
               <Badge variant="secondary" className="text-xs">
-                📅 {data.metadata.exam_year}年{data.metadata.exam_month}月
+                📅 {data.metadata.exam_year ? `${data.metadata.exam_year}年${data.metadata.exam_month}月` : "自定义数据"}
               </Badge>
               <Badge variant="secondary" className="text-xs">
                 📋 {data.sets.length}套题
@@ -1803,11 +1803,11 @@ function DataSourceSelector() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
               <div>
                 <span className="font-medium text-foreground">标注版本：</span>
-                v{data.metadata.annotation_version}
+                v{data.metadata.annotation_version || "2.0"}
               </div>
               <div>
                 <span className="font-medium text-foreground">题目类型：</span>
-                {data.question_types.map((qt) => qt.label).join("、")}
+                {(data.question_types ?? []).map((qt) => qt.label).join("、") || "未指定"}
               </div>
               <div>
                 <span className="font-medium text-foreground">数据来源：</span>
@@ -1842,8 +1842,9 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState("statistics");
   const [questionType, setQuestionType] = useState("banked_cloze");
 
-  const selectedQt = data.question_types.find((qt) => qt.id === questionType);
-  const hasData = questionType === "banked_cloze";
+  const selectedQt = data.question_types?.find((qt) => qt.id === questionType);
+  // Show data if there are sets available, or if using banked_cloze (default)
+  const hasData = data.sets && data.sets.length > 0;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -1871,7 +1872,7 @@ export default function HomePage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {data.question_types.map((qt) => (
+                  {(data.question_types ?? []).map((qt) => (
                     <SelectItem key={qt.id} value={qt.id}>
                       {qt.label}
                     </SelectItem>
@@ -1986,9 +1987,9 @@ export default function HomePage() {
       <footer className="border-t mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-muted-foreground">
           {isDefaultData ? (
-            <>数据来源：内置静态数据 · 标注版本：v{data.metadata.annotation_version} · 题型扩展：5种CET4题型</>
+            <>数据来源：内置静态数据 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 题型扩展：{(data.question_types ?? []).length}种CET4题型</>
           ) : (
-            <>数据来源：上传数据集 · 标注版本：v{data.metadata.annotation_version} · 套题数：{data.sets.length}</>
+            <>数据来源：上传数据集 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 套题数：{data.sets.length}</>
           )}
         </div>
       </footer>
