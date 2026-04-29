@@ -155,7 +155,7 @@ export const cet4Data: CET4Data = {
     exam_year: 2015,
     exam_month: 6,
     total_sets: 3,
-    annotation_version: "1.0",
+    annotation_version: "2.0",
   },
   question_types: [
     {
@@ -1501,4 +1501,27 @@ export function getAllWords(): Array<{ word: string; letter: string; setId: numb
     }
   }
   return results;
+}
+
+// Classify word part of speech based on its grammar sub_categories
+export function getWordPartOfSpeech(word: string): string {
+  const allBlanks = getAllBlanks();
+  const blank = allBlanks.find(b => b.annotations.correct_word.toLowerCase() === word.toLowerCase());
+  if (!blank) return "未知";
+  const grammarKps = blank.annotations.knowledge_points.filter(kp => kp.category === "语法");
+  if (grammarKps.length === 0) return "未知";
+  const subCats = grammarKps.map(kp => kp.sub_category);
+  if (subCats.some(s => s.includes("动名词") || s.includes("动名词结构"))) return "动名词";
+  if (subCats.some(s => s.includes("分词"))) return "分词";
+  if (subCats.some(s => s.includes("副词"))) return "副词";
+  if (subCats.some(s => s.includes("形容词"))) return "形容词";
+  if (subCats.some(s => s.includes("动词"))) return "动词";
+  if (subCats.some(s => s.includes("名词"))) return "名词";
+  return "未知";
+}
+
+// Get word frequency count (how many times it appears as correct answer across all sets)
+export function getWordFrequencyCount(word: string): number {
+  const allBlanks = getAllBlanks();
+  return allBlanks.filter(b => b.annotations.correct_word.toLowerCase() === word.toLowerCase()).length;
 }

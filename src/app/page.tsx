@@ -73,6 +73,9 @@ import {
   Sparkles,
   Tag,
   Layers,
+  Eye,
+  EyeOff,
+  Database,
 } from "lucide-react";
 
 // ─── Chart Configs ───────────────────────────────────────────────
@@ -771,10 +774,36 @@ function QuestionSearchTab() {
 
                   {/* Full passage with blanks */}
                   <div>
-                    <h4 className="text-sm font-medium mb-2 text-muted-foreground flex items-center gap-1">
-                      <FileText className="h-3.5 w-3.5" /> 文章（点击空格显示答案）
-                    </h4>
-                    <div className="text-sm leading-relaxed bg-muted/30 rounded-lg p-4 space-y-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                        <FileText className="h-3.5 w-3.5" /> 文章（点击空格显示答案）
+                      </h4>
+                      <button
+                        className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1 ml-auto"
+                        onClick={() => {
+                          const allKeys = set.passage.segments
+                            .filter((s) => s.type === "blank")
+                            .map((s) => `${set.set_id}-${s.type === "blank" ? s.id : ""}`);
+                          setRevealedBlanks((prev) => {
+                            const allRevealed = allKeys.every((k) => prev.has(k));
+                            const next = new Set(prev);
+                            if (allRevealed) {
+                              allKeys.forEach((k) => next.delete(k));
+                            } else {
+                              allKeys.forEach((k) => next.add(k));
+                            }
+                            return next;
+                          });
+                        }}
+                      >
+                        {set.passage.segments.filter((s) => s.type === "blank").every((s) => revealedBlanks.has(`${set.set_id}-${s.id}`)) ? (
+                          <><EyeOff className="h-3.5 w-3.5" /> 全部隐藏</>
+                        ) : (
+                          <><Eye className="h-3.5 w-3.5" /> 全部显示</>
+                        )}
+                      </button>
+                    </div>
+                    <div className="text-sm leading-relaxed bg-muted/30 rounded-lg p-4 whitespace-pre-wrap">
                       {set.passage.segments.map((seg, i) => {
                         if (seg.type === "text") {
                           return <span key={i}>{seg.content}</span>;
@@ -1177,9 +1206,13 @@ function WordAssociationTab() {
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState("statistics");
+  const [questionType, setQuestionType] = useState("banked_cloze");
+
+  const selectedQt = cet4Data.question_types.find((qt) => qt.id === questionType);
+  const hasData = questionType === "banked_cloze";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
       <header className="border-b bg-gradient-to-r from-teal-50 via-emerald-50 to-amber-50 dark:from-teal-950/30 dark:via-emerald-950/30 dark:to-amber-950/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -1198,6 +1231,19 @@ export default function HomePage() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              <Select value={questionType} onValueChange={setQuestionType}>
+                <SelectTrigger className="w-[180px] h-8 text-xs">
+                  <Database className="h-3.5 w-3.5 mr-1 text-teal-600" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {cet4Data.question_types.map((qt) => (
+                    <SelectItem key={qt.id} value={qt.id}>
+                      {qt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Badge variant="secondary" className="text-xs">
                 📅 {cet4Data.metadata.exam_year}年{cet4Data.metadata.exam_month}月
               </Badge>
@@ -1213,7 +1259,21 @@ export default function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        {!hasData ? (
+          <Card className="py-20">
+            <CardContent className="text-center space-y-4">
+              <Database className="h-16 w-16 mx-auto text-teal-300" />
+              <h2 className="text-xl font-semibold text-foreground">{selectedQt?.label}</h2>
+              <p className="text-muted-foreground max-w-md mx-auto">
+                {selectedQt?.description}
+              </p>
+              <p className="text-sm text-teal-600 bg-teal-50 dark:bg-teal-950/50 rounded-lg px-4 py-2 inline-block">
+                该题型数据尚未录入，敬请期待
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="mb-6">
             <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-muted/50 p-1.5 rounded-xl">
@@ -1271,12 +1331,13 @@ export default function HomePage() {
             <WordAssociationTab />
           </TabsContent>
         </Tabs>
+        )}
       </main>
 
       {/* Footer */}
       <footer className="border-t mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-muted-foreground">
-          CET4 词汇匹配标注检索系统 · 数据来源：2015年6月CET4 Part III Section A · 标注版本 {cet4Data.metadata.annotation_version}
+          数据来源：201506P3SA.json · 标注版本：v{cet4Data.metadata.annotation_version} · 题型扩展：5种CET4题型
         </div>
       </footer>
     </div>
