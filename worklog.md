@@ -78,3 +78,40 @@ Stage Summary:
 - 11 pages, 364.8 KB, all 7 required sections included
 - Teal/emerald color theme, 11 tables, Chinese throughout
 - Cover page + TOC + body content, proper PDF metadata
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Add JSON file upload API and data management interface
+
+Work Log:
+- Updated Prisma schema to add Dataset model (name, fileName, fileType, fileSize, data, examYear, examMonth, totalSets, description, tags)
+- Ran prisma db push to sync database schema
+- Created POST /api/upload route for JSON file upload with validation
+  - Supports multipart/form-data with file, name, description, tags fields
+  - Validates file type (.json only), file size (10MB max), JSON structure
+  - Supports multiple JSON formats: CET4Data, single set, array, generic object
+  - Auto-extracts metadata (exam_year, exam_month, total_sets) from JSON content
+  - Duplicate name detection
+- Created CRUD API at /api/datasets (GET, PUT, DELETE)
+  - GET: list datasets with pagination, search, optional full data
+  - PUT: update dataset metadata (name, description, tags)
+  - DELETE: remove dataset by ID
+- Added "数据上传" tab to frontend with:
+  - Drag & drop file upload zone
+  - File preview (first 2000 chars of formatted JSON)
+  - Auto-fill dataset name from JSON metadata
+  - Metadata fields: name, description, tags
+  - Upload progress indicator
+  - Success/error result display
+  - Dataset list with export and delete actions
+  - API documentation card
+- Verified build succeeds and APIs work correctly
+- Tested upload with 201506P3SA.json - successfully stored in database
+
+Stage Summary:
+- JSON upload API fully functional at POST /api/upload
+- Dataset CRUD API at /api/datasets (GET/PUT/DELETE)
+- Frontend "数据上传" tab with drag-drop upload, preview, and dataset management
+- Database stores JSON content with rich metadata
+- All APIs tested and working

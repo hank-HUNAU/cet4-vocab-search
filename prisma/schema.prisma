@@ -30,3 +30,19 @@ model Post {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model Dataset {
+  id          String   @id @default(cuid())
+  name        String                    // 数据集名称，如 "CET4_201506_P3SA"
+  fileName    String                    // 原始上传文件名
+  fileType    String   @default("json") // 文件类型
+  fileSize    Int                        // 文件大小(字节)
+  data        String                     // JSON字符串内容
+  examYear    Int?                       // 考试年份
+  examMonth   Int?                       // 考试月份
+  totalSets   Int?                       // 套题数量
+  description String?                    // 数据集描述
+  tags        String?                    // 标签，逗号分隔
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

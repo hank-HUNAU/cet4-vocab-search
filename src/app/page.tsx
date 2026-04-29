@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   cet4Data,
   getAllBlanks,
@@ -76,6 +76,14 @@ import {
   Eye,
   EyeOff,
   Database,
+  Upload,
+  Trash2,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  FileJson,
+  Download,
+  X,
 } from "lucide-react";
 
 // ─── Chart Configs ───────────────────────────────────────────────
@@ -1202,6 +1210,507 @@ function WordAssociationTab() {
   );
 }
 
+// ─── Data Upload Tab ─────────────────────────────────────────────
+
+interface DatasetItem {
+  id: string;
+  name: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  examYear: number | null;
+  examMonth: number | null;
+  totalSets: number | null;
+  description: string | null;
+  tags: string | null;
+  createdAt: string;
+}
+
+function DataUploadTab() {
+  const [datasets, setDatasets] = useState<DatasetItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [datasetName, setDatasetName] = useState("");
+  const [datasetDesc, setDatasetDesc] = useState("");
+  const [datasetTags, setDatasetTags] = useState("");
+  const [previewData, setPreviewData] = useState<string | null>(null);
+
+  const fetchDatasets = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/datasets");
+      const json = await res.json();
+      if (json.success) {
+        setDatasets(json.data);
+      }
+    } catch {
+      console.error("Failed to fetch datasets");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load datasets on mount
+  useEffect(() => {
+    fetchDatasets();
+  }, [fetchDatasets]);
+
+  const handleFileSelect = useCallback(
+    async (file: File) => {
+      if (!file.name.endsWith(".json") && file.type !== "application/json") {
+        setUploadResult({ success: false, message: "仅支持JSON文件" });
+        return;
+      }
+      setSelectedFile(file);
+      setUploadResult(null);
+
+      // Read and preview
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        setPreviewData(JSON.stringify(parsed, null, 2).slice(0, 2000));
+        // Auto-fill name from metadata if available
+        if (parsed.metadata) {
+          if (parsed.metadata.exam_year && parsed.metadata.exam_month) {
+            setDatasetName(
+              `CET4_${parsed.metadata.exam_year}${String(parsed.metadata.exam_month).padStart(2, "0")}_P3SA`
+            );
+          }
+        }
+      } catch {
+        setPreviewData("JSON解析失败");
+      }
+    },
+    []
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragActive(false);
+      const file = e.dataTransfer.files[0];
+      if (file) handleFileSelect(file);
+    },
+    [handleFileSelect]
+  );
+
+  const handleUpload = useCallback(async () => {
+    if (!selectedFile) return;
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      if (datasetName) formData.append("name", datasetName);
+      if (datasetDesc) formData.append("description", datasetDesc);
+      if (datasetTags) formData.append("tags", datasetTags);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (json.success) {
+        setUploadResult({
+          success: true,
+          message: `数据集"${json.data.name}"上传成功！`,
+        });
+        setSelectedFile(null);
+        setPreviewData(null);
+        setDatasetName("");
+        setDatasetDesc("");
+        setDatasetTags("");
+        fetchDatasets();
+      } else {
+        setUploadResult({
+          success: false,
+          message: json.error || "上传失败",
+        });
+      }
+    } catch {
+      setUploadResult({ success: false, message: "网络错误，上传失败" });
+    } finally {
+      setUploading(false);
+    }
+  }, [selectedFile, datasetName, datasetDesc, datasetTags, fetchDatasets]);
+
+  const handleDelete = useCallback(
+    async (id: string, name: string) => {
+      if (!confirm(`确定删除数据集"${name}"？此操作不可撤销。`)) return;
+      try {
+        const res = await fetch(`/api/datasets?id=${id}`, { method: "DELETE" });
+        const json = await res.json();
+        if (json.success) {
+          fetchDatasets();
+        }
+      } catch {
+        console.error("Delete failed");
+      }
+    },
+    [fetchDatasets]
+  );
+
+  const handleExport = useCallback(async (id: string, name: string) => {
+    try {
+      const res = await fetch(`/api/datasets?id=${id}&withData=true`);
+      const json = await res.json();
+      if (json.success && json.data.data) {
+        const blob = new Blob([json.data.data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${name}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      console.error("Export failed");
+    }
+  }, []);
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Upload Area */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Upload className="h-4 w-4 text-teal-600" />
+            JSON文件上传
+          </CardTitle>
+          <CardDescription>
+            上传CET4标注数据JSON文件，系统自动解析并存储到数据库
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Drag & Drop Zone */}
+          <div
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
+              dragActive
+                ? "border-teal-400 bg-teal-50 dark:bg-teal-950/30"
+                : "border-muted-foreground/25 hover:border-teal-300 hover:bg-teal-50/50 dark:hover:bg-teal-950/20"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={() => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".json";
+              input.onchange = (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (file) handleFileSelect(file);
+              };
+              input.click();
+            }}
+          >
+            <Upload
+              className={`h-10 w-10 mx-auto mb-3 ${
+                dragActive ? "text-teal-500" : "text-muted-foreground/40"
+              }`}
+            />
+            <p className="text-sm font-medium">
+              拖拽JSON文件到此处，或点击选择文件
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              支持 .json 格式，最大 10MB
+            </p>
+          </div>
+
+          {/* Selected File Info */}
+          {selectedFile && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 bg-teal-50 dark:bg-teal-950/30 rounded-lg">
+                <FileJson className="h-8 w-8 text-teal-600" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {selectedFile.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(selectedFile.size)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    setPreviewData(null);
+                  }}
+                  className="p-1 hover:bg-teal-100 dark:hover:bg-teal-900 rounded"
+                >
+                  <X className="h-4 w-4 text-muted-foreground" />
+                </button>
+              </div>
+
+              {/* Metadata Fields */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    数据集名称
+                  </label>
+                  <Input
+                    placeholder="自动生成或手动输入"
+                    value={datasetName}
+                    onChange={(e) => setDatasetName(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    描述
+                  </label>
+                  <Input
+                    placeholder="可选描述信息"
+                    value={datasetDesc}
+                    onChange={(e) => setDatasetDesc(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    标签（逗号分隔）
+                  </label>
+                  <Input
+                    placeholder="如: CET4,2015,词汇"
+                    value={datasetTags}
+                    onChange={(e) => setDatasetTags(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* JSON Preview */}
+              {previewData && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    数据预览
+                  </label>
+                  <ScrollArea className="h-40 rounded-lg border bg-muted/30 p-3">
+                    <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
+                      {previewData}
+                      {previewData.length >= 2000 && "\n... (已截断)"}
+                    </pre>
+                  </ScrollArea>
+                </div>
+              )}
+
+              {/* Upload Button */}
+              <button
+                onClick={handleUpload}
+                disabled={uploading}
+                className="w-full h-10 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
+              >
+                {uploading ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    上传中...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4" />
+                    上传到数据库
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Upload Result */}
+          {uploadResult && (
+            <div
+              className={`flex items-center gap-2 p-3 rounded-lg text-sm ${
+                uploadResult.success
+                  ? "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300"
+                  : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
+              }`}
+            >
+              {uploadResult.success ? (
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              )}
+              {uploadResult.message}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Dataset List */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Database className="h-4 w-4 text-teal-600" />
+                已上传数据集
+              </CardTitle>
+              <CardDescription>管理已上传的JSON数据文件</CardDescription>
+            </div>
+            <button
+              onClick={fetchDatasets}
+              className="text-sm text-teal-600 hover:text-teal-700 flex items-center gap-1"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+              />
+              刷新
+            </button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading && datasets.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <RefreshCw className="h-6 w-6 mx-auto mb-2 animate-spin" />
+              <p className="text-sm">加载中...</p>
+            </div>
+          ) : datasets.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Database className="h-10 w-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm font-medium">暂无数据集</p>
+              <p className="text-xs mt-1">上传JSON文件后，数据集将显示在此处</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {datasets.map((ds) => (
+                <div
+                  key={ds.id}
+                  className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                >
+                  <FileJson className="h-8 w-8 text-teal-600 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium">{ds.name}</p>
+                      {ds.examYear && ds.examMonth && (
+                        <Badge variant="secondary" className="text-xs">
+                          {ds.examYear}年{ds.examMonth}月
+                        </Badge>
+                      )}
+                      {ds.totalSets && (
+                        <Badge variant="secondary" className="text-xs">
+                          {ds.totalSets}套题
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+                      <span>{ds.fileName}</span>
+                      <span>{formatFileSize(ds.fileSize)}</span>
+                      <span>
+                        {new Date(ds.createdAt).toLocaleString("zh-CN")}
+                      </span>
+                    </div>
+                    {ds.description && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {ds.description}
+                      </p>
+                    )}
+                    {ds.tags && (
+                      <div className="flex gap-1 mt-1">
+                        {ds.tags.split(",").map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="text-xs py-0"
+                          >
+                            {tag.trim()}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => handleExport(ds.id, ds.name)}
+                      className="p-1.5 hover:bg-teal-50 dark:hover:bg-teal-950 rounded transition-colors"
+                      title="导出JSON"
+                    >
+                      <Download className="h-4 w-4 text-teal-600" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(ds.id, ds.name)}
+                      className="p-1.5 hover:bg-red-50 dark:hover:bg-red-950 rounded transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API Documentation */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <FileText className="h-4 w-4 text-teal-600" />
+            接口文档
+          </CardTitle>
+          <CardDescription>JSON上传与数据集管理API说明</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-green-600 text-white text-xs">
+                  POST
+                </Badge>
+                <code className="text-sm font-mono">/api/upload</code>
+              </div>
+              <p className="text-xs text-muted-foreground pl-16">
+                上传JSON文件（multipart/form-data），支持字段：file(必须)、name、description、tags
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-blue-600 text-white text-xs">GET</Badge>
+                <code className="text-sm font-mono">/api/datasets</code>
+              </div>
+              <p className="text-xs text-muted-foreground pl-16">
+                查询数据集列表，参数：id、search、page、pageSize、withData
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-amber-600 text-white text-xs">PUT</Badge>
+                <code className="text-sm font-mono">/api/datasets</code>
+              </div>
+              <p className="text-xs text-muted-foreground pl-16">
+                更新数据集元信息，Body: {"{ id, name, description, tags }"}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-red-600 text-white text-xs">
+                  DELETE
+                </Badge>
+                <code className="text-sm font-mono">/api/datasets?id=xxx</code>
+              </div>
+              <p className="text-xs text-muted-foreground pl-16">
+                删除指定数据集
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -1312,6 +1821,13 @@ export default function HomePage() {
                 <Link2 className="h-4 w-4 mr-1.5" />
                 单词关联
               </TabsTrigger>
+              <TabsTrigger
+                value="upload"
+                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+              >
+                <Upload className="h-4 w-4 mr-1.5" />
+                数据上传
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -1329,6 +1845,9 @@ export default function HomePage() {
           </TabsContent>
           <TabsContent value="word">
             <WordAssociationTab />
+          </TabsContent>
+          <TabsContent value="upload">
+            <DataUploadTab />
           </TabsContent>
         </Tabs>
         )}
