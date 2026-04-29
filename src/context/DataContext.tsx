@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import { cet4Data, type CET4Data } from "@/data/cet4-data";
@@ -86,10 +87,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Load datasets on mount
+  // Load datasets on mount (with error guard)
+  const mountedRef = useRef(false);
   useEffect(() => {
-    refreshDatasets();
-  }, [refreshDatasets]);
+    if (mountedRef.current) return;
+    mountedRef.current = true;
+    refreshDatasets().catch(() => {
+      // Silently fail - datasets list is non-critical
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load dataset by ID ──────────────────────────────────────────
 
@@ -99,11 +105,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setError(null);
       try {
         const res = await fetch(`/api/datasets?id=${id}&withData=true`);
+        if (!res.ok) {
+          throw new Error(`HTTP错误 ${res.status}`);
+        }
         const json = await res.json();
         if (!json.success) {
           throw new Error(json.error || "加载失败");
         }
-        const rawParsed = JSON.parse(json.data.data);
+        const dataField = json.data?.data;
+        if (!dataField) {
+          throw new Error("数据集内容为空");
+        }
+        const rawParsed = JSON.parse(dataField);
         // Normalize: ensure metadata, question_types, sets all exist
         const normalized = normalizeToCET4Data(rawParsed);
         const enriched = enrichCET4Data(normalized);
@@ -149,6 +162,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
           method: "POST",
           body: formData,
         });
+        if (!res.ok) {
+          throw new Error(`HTTP错误 ${res.status}`);
+        }
         const json = await res.json();
         if (!json.success) {
           throw new Error(json.error || "上传失败");
@@ -179,6 +195,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const res = await fetch(`/api/datasets?id=${id}`, {
           method: "DELETE",
         });
+        if (!res.ok) {
+          throw new Error(`HTTP错误 ${res.status}`);
+        }
         const json = await res.json();
         if (!json.success) {
           throw new Error(json.error || "删除失败");
