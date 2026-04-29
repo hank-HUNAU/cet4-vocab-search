@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
-  cet4Data,
+  type Category,
+  type BlankAnnotation,
+  type KnowledgePoint,
+  type ExamSet,
+  type CET4Data,
+} from "@/data/cet4-data";
+import {
   getAllBlanks,
   getSubCategories,
   getSubCategoryDistribution,
@@ -11,11 +17,8 @@ import {
   getWordAssociations,
   getRelatedWords,
   getAllWords,
-  type Category,
-  type BlankAnnotation,
-  type KnowledgePoint,
-  type ExamSet,
-} from "@/data/cet4-data";
+} from "@/lib/cet4-utils";
+import { useDataContext, type DatasetItem } from "@/context/DataContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Card,
@@ -59,7 +62,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  ResponsiveContainer,
 } from "recharts";
 import {
   BookOpen,
@@ -84,7 +86,10 @@ import {
   FileJson,
   Download,
   X,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { toast } from "sonner";
 
 // ─── Chart Configs ───────────────────────────────────────────────
 
@@ -246,11 +251,11 @@ function BlankInline({
 
 // ─── Statistics Overview Tab ──────────────────────────────────────
 
-function StatisticsTab() {
-  const allBlanks = useMemo(() => getAllBlanks(), []);
-  const grammarDist = useMemo(() => getSubCategoryDistribution("语法"), []);
-  const semanticDist = useMemo(() => getSubCategoryDistribution("语义"), []);
-  const posDist = useMemo(() => getWordPartOfSpeechDistribution(), []);
+function StatisticsTab({ data }: { data: CET4Data }) {
+  const allBlanks = useMemo(() => getAllBlanks(data), [data]);
+  const grammarDist = useMemo(() => getSubCategoryDistribution(data, "语法"), [data]);
+  const semanticDist = useMemo(() => getSubCategoryDistribution(data, "语义"), [data]);
+  const posDist = useMemo(() => getWordPartOfSpeechDistribution(data), [data]);
 
   const totalBlanks = allBlanks.length;
   const totalKps = allBlanks.reduce(
@@ -442,7 +447,7 @@ function StatisticsTab() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">题目套数概览</CardTitle>
-          <CardDescription>3套题目的基本信息</CardDescription>
+          <CardDescription>{data.sets.length}套题目的基本信息</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -457,7 +462,7 @@ function StatisticsTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {cet4Data.sets.map((set) => {
+              {data.sets.map((set) => {
                 const blanks = set.passage.segments.filter(
                   (s) => s.type === "blank"
                 );
@@ -513,16 +518,16 @@ function StatisticsTab() {
 
 // ─── Knowledge Point Search Tab ──────────────────────────────────
 
-function KnowledgePointSearchTab() {
+function KnowledgePointSearchTab({ data }: { data: CET4Data }) {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [subCategoryFilter, setSubCategoryFilter] = useState<string>("all");
 
-  const allBlanks = useMemo(() => getAllBlanks(), []);
+  const allBlanks = useMemo(() => getAllBlanks(data), [data]);
 
   const subCategories = useMemo(() => {
     const cat = categoryFilter === "all" ? undefined : (categoryFilter as Category);
-    return getSubCategories(cat);
-  }, [categoryFilter]);
+    return getSubCategories(data, cat);
+  }, [data, categoryFilter]);
 
   const filtered = useMemo(() => {
     return allBlanks.filter((b) => {
@@ -647,7 +652,7 @@ function KnowledgePointSearchTab() {
 
 // ─── Question Search Tab ─────────────────────────────────────────
 
-function QuestionSearchTab() {
+function QuestionSearchTab({ data }: { data: CET4Data }) {
   const [setFilter, setSetFilter] = useState<string>("all");
   const [blankRangeStart, setBlankRangeStart] = useState<string>("");
   const [blankRangeEnd, setBlankRangeEnd] = useState<string>("");
@@ -666,12 +671,12 @@ function QuestionSearchTab() {
   }, []);
 
   const filteredSets = useMemo(() => {
-    let sets = cet4Data.sets;
+    let sets = data.sets;
     if (setFilter !== "all") {
       sets = sets.filter((s) => s.set_id === Number(setFilter));
     }
     return sets;
-  }, [setFilter]);
+  }, [data, setFilter]);
 
   const getBlanksForSet = useCallback(
     (set: ExamSet) => {
@@ -708,9 +713,11 @@ function QuestionSearchTab() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部</SelectItem>
-              <SelectItem value="1">第1套</SelectItem>
-              <SelectItem value="2">第2套</SelectItem>
-              <SelectItem value="3">第3套</SelectItem>
+              {data.sets.map((s) => (
+                <SelectItem key={s.set_id} value={String(s.set_id)}>
+                  第{s.set_id}套
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <div className="flex items-center gap-2">
@@ -894,13 +901,13 @@ function QuestionSearchTab() {
 
 // ─── Full Text Search Tab ────────────────────────────────────────
 
-function FullTextSearchTab() {
+function FullTextSearchTab({ data }: { data: CET4Data }) {
   const [query, setQuery] = useState("");
 
   const results = useMemo(() => {
     if (!query.trim()) return [];
-    return searchFullText(query);
-  }, [query]);
+    return searchFullText(data, query);
+  }, [data, query]);
 
   // Group by setId
   const groupedResults = useMemo(() => {
@@ -968,7 +975,7 @@ function FullTextSearchTab() {
         <ScrollArea className="h-[calc(100vh-300px)]">
           <div className="space-y-4 pr-4">
             {Object.entries(groupedResults).map(([setId, items]) => {
-              const set = cet4Data.sets.find((s) => s.set_id === Number(setId));
+              const set = data.sets.find((s) => s.set_id === Number(setId));
               return (
                 <Card key={setId}>
                   <CardHeader className="pb-2">
@@ -1007,11 +1014,11 @@ function FullTextSearchTab() {
 
 // ─── Word Association Tab ────────────────────────────────────────
 
-function WordAssociationTab() {
+function WordAssociationTab({ data }: { data: CET4Data }) {
   const [selectedWord, setSelectedWord] = useState<string>("");
   const [searchInput, setSearchInput] = useState<string>("");
 
-  const allWords = useMemo(() => getAllWords(), []);
+  const allWords = useMemo(() => getAllWords(data), [data]);
 
   const filteredWords = useMemo(() => {
     if (!searchInput.trim()) return allWords.slice(0, 30);
@@ -1023,13 +1030,13 @@ function WordAssociationTab() {
 
   const associations = useMemo(() => {
     if (!selectedWord) return [];
-    return getWordAssociations(selectedWord);
-  }, [selectedWord]);
+    return getWordAssociations(data, selectedWord);
+  }, [data, selectedWord]);
 
   const relatedWords = useMemo(() => {
     if (!selectedWord) return [];
-    return getRelatedWords(selectedWord);
-  }, [selectedWord]);
+    return getRelatedWords(data, selectedWord);
+  }, [data, selectedWord]);
 
   // Gather all knowledge points for the selected word
   const allKpsForWord = useMemo(() => {
@@ -1212,23 +1219,18 @@ function WordAssociationTab() {
 
 // ─── Data Upload Tab ─────────────────────────────────────────────
 
-interface DatasetItem {
-  id: string;
-  name: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
-  examYear: number | null;
-  examMonth: number | null;
-  totalSets: number | null;
-  description: string | null;
-  tags: string | null;
-  createdAt: string;
-}
-
 function DataUploadTab() {
-  const [datasets, setDatasets] = useState<DatasetItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const {
+    datasets,
+    isLoading: ctxLoading,
+    uploadAndLoad,
+    deleteDataset,
+    refreshDatasets,
+    loadDataset,
+    resetToDefault,
+    currentDatasetId,
+  } = useDataContext();
+
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{
     success: boolean;
@@ -1240,26 +1242,16 @@ function DataUploadTab() {
   const [datasetDesc, setDatasetDesc] = useState("");
   const [datasetTags, setDatasetTags] = useState("");
   const [previewData, setPreviewData] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const fetchDatasets = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/datasets");
-      const json = await res.json();
-      if (json.success) {
-        setDatasets(json.data);
-      }
-    } catch {
-      console.error("Failed to fetch datasets");
+      await refreshDatasets();
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  // Load datasets on mount
-  useEffect(() => {
-    fetchDatasets();
-  }, [fetchDatasets]);
+  }, [refreshDatasets]);
 
   const handleFileSelect = useCallback(
     async (file: File) => {
@@ -1305,55 +1297,36 @@ function DataUploadTab() {
     setUploading(true);
     setUploadResult(null);
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      if (datasetName) formData.append("name", datasetName);
-      if (datasetDesc) formData.append("description", datasetDesc);
-      if (datasetTags) formData.append("tags", datasetTags);
-
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
+      await uploadAndLoad(selectedFile, datasetName || undefined, datasetDesc || undefined, datasetTags || undefined);
+      setUploadResult({
+        success: true,
+        message: `数据集上传成功并已自动加载！`,
       });
-      const json = await res.json();
-      if (json.success) {
-        setUploadResult({
-          success: true,
-          message: `数据集"${json.data.name}"上传成功！`,
-        });
-        setSelectedFile(null);
-        setPreviewData(null);
-        setDatasetName("");
-        setDatasetDesc("");
-        setDatasetTags("");
-        fetchDatasets();
-      } else {
-        setUploadResult({
-          success: false,
-          message: json.error || "上传失败",
-        });
-      }
+      toast.success("上传成功", { description: "数据已自动加载到分析视图" });
+      setSelectedFile(null);
+      setPreviewData(null);
+      setDatasetName("");
+      setDatasetDesc("");
+      setDatasetTags("");
     } catch {
-      setUploadResult({ success: false, message: "网络错误，上传失败" });
+      setUploadResult({ success: false, message: "上传失败" });
+      toast.error("上传失败", { description: "请检查文件格式是否正确" });
     } finally {
       setUploading(false);
     }
-  }, [selectedFile, datasetName, datasetDesc, datasetTags, fetchDatasets]);
+  }, [selectedFile, datasetName, datasetDesc, datasetTags, uploadAndLoad]);
 
   const handleDelete = useCallback(
     async (id: string, name: string) => {
       if (!confirm(`确定删除数据集"${name}"？此操作不可撤销。`)) return;
       try {
-        const res = await fetch(`/api/datasets?id=${id}`, { method: "DELETE" });
-        const json = await res.json();
-        if (json.success) {
-          fetchDatasets();
-        }
+        await deleteDataset(id);
+        toast.success("删除成功", { description: `数据集"${name}"已删除` });
       } catch {
-        console.error("Delete failed");
+        toast.error("删除失败");
       }
     },
-    [fetchDatasets]
+    [deleteDataset]
   );
 
   const handleExport = useCallback(async (id: string, name: string) => {
@@ -1521,7 +1494,7 @@ function DataUploadTab() {
                 ) : (
                   <>
                     <Upload className="h-4 w-4" />
-                    上传到数据库
+                    上传并加载到分析视图
                   </>
                 )}
               </button>
@@ -1584,15 +1557,22 @@ function DataUploadTab() {
             </div>
           ) : (
             <div className="space-y-3">
-              {datasets.map((ds) => (
+              {datasets.map((ds: DatasetItem) => (
                 <div
                   key={ds.id}
-                  className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                  className={`flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/30 transition-colors ${
+                    currentDatasetId === ds.id
+                      ? "border-teal-400 bg-teal-50/50 dark:bg-teal-950/20"
+                      : ""
+                  }`}
                 >
                   <FileJson className="h-8 w-8 text-teal-600 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium">{ds.name}</p>
+                      {currentDatasetId === ds.id && (
+                        <Badge className="bg-teal-600 text-white text-xs">当前加载</Badge>
+                      )}
                       {ds.examYear && ds.examMonth && (
                         <Badge variant="secondary" className="text-xs">
                           {ds.examYear}年{ds.examMonth}月
@@ -1616,21 +1596,17 @@ function DataUploadTab() {
                         {ds.description}
                       </p>
                     )}
-                    {ds.tags && (
-                      <div className="flex gap-1 mt-1">
-                        {ds.tags.split(",").map((tag) => (
-                          <Badge
-                            key={tag}
-                            variant="outline"
-                            className="text-xs py-0"
-                          >
-                            {tag.trim()}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
+                    {currentDatasetId !== ds.id && (
+                      <button
+                        onClick={() => loadDataset(ds.id)}
+                        className="p-1.5 hover:bg-teal-50 dark:hover:bg-teal-950 rounded transition-colors"
+                        title="加载此数据集"
+                      >
+                        <Database className="h-4 w-4 text-teal-600" />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleExport(ds.id, ds.name)}
                       className="p-1.5 hover:bg-teal-50 dark:hover:bg-teal-950 rounded transition-colors"
@@ -1711,13 +1687,162 @@ function DataUploadTab() {
   );
 }
 
+// ─── Data Source Selector (above tabs) ─────────────────────────────
+
+function DataSourceSelector() {
+  const {
+    data,
+    isDefaultData,
+    currentDatasetId,
+    datasets,
+    isLoading,
+    error,
+    loadDataset,
+    resetToDefault,
+  } = useDataContext();
+
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const totalBlanks = useMemo(() => {
+    let count = 0;
+    for (const set of data.sets) {
+      for (const seg of set.passage.segments) {
+        if (seg.type === "blank") count++;
+      }
+    }
+    return count;
+  }, [data]);
+
+  return (
+    <Card className="mb-4 border-teal-200 dark:border-teal-800">
+      <CardContent className="pt-4 pb-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          {/* Left: data source info */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-teal-600" />
+              <span className="text-sm font-medium">数据源：</span>
+            </div>
+            <Select
+              value={currentDatasetId || "__default__"}
+              onValueChange={(val) => {
+                if (val === "__default__") {
+                  resetToDefault();
+                } else {
+                  loadDataset(val);
+                }
+              }}
+            >
+              <SelectTrigger className="w-[240px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default__">
+                  📦 内置数据 ({data.metadata.exam_year}年{data.metadata.exam_month}月)
+                </SelectItem>
+                {datasets.map((ds) => (
+                  <SelectItem key={ds.id} value={ds.id}>
+                    📁 {ds.name}
+                    {ds.examYear && ds.examMonth
+                      ? ` (${ds.examYear}年${ds.examMonth}月)`
+                      : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge
+                variant="outline"
+                className={`text-xs ${
+                  isDefaultData
+                    ? "border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
+                    : "border-amber-400 text-amber-600 dark:border-amber-600 dark:text-amber-400"
+                }`}
+              >
+                {isDefaultData ? "内置数据" : "自定义数据"}
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                📅 {data.metadata.exam_year}年{data.metadata.exam_month}月
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                📋 {data.sets.length}套题
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                📝 {totalBlanks}空
+              </Badge>
+            </div>
+          </div>
+
+          {/* Right: reset + expand */}
+          <div className="flex items-center gap-2">
+            {!isDefaultData && (
+              <button
+                onClick={resetToDefault}
+                className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                恢复默认数据
+              </button>
+            )}
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 rounded hover:bg-muted/50 transition-colors"
+            >
+              {isExpanded ? (
+                <><ChevronUp className="h-3.5 w-3.5" /> 收起</>
+              ) : (
+                <><ChevronDown className="h-3.5 w-3.5" /> 详情</>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Expanded: metadata + error */}
+        {isExpanded && (
+          <div className="mt-3 pt-3 border-t space-y-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
+              <div>
+                <span className="font-medium text-foreground">标注版本：</span>
+                v{data.metadata.annotation_version}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">题目类型：</span>
+                {data.question_types.map((qt) => qt.label).join("、")}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">数据来源：</span>
+                {isDefaultData ? "内置静态数据" : `上传数据集 (${currentDatasetId?.slice(0, 8)}...)`}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">加载状态：</span>
+                {isLoading ? (
+                  <span className="text-amber-600">加载中...</span>
+                ) : (
+                  <span className="text-green-600">已就绪</span>
+                )}
+              </div>
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 p-2 rounded bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300 text-xs">
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────
 
 export default function HomePage() {
+  const { data, isDefaultData } = useDataContext();
   const [activeTab, setActiveTab] = useState("statistics");
   const [questionType, setQuestionType] = useState("banked_cloze");
 
-  const selectedQt = cet4Data.question_types.find((qt) => qt.id === questionType);
+  const selectedQt = data.question_types.find((qt) => qt.id === questionType);
   const hasData = questionType === "banked_cloze";
 
   return (
@@ -1746,21 +1871,22 @@ export default function HomePage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {cet4Data.question_types.map((qt) => (
+                  {data.question_types.map((qt) => (
                     <SelectItem key={qt.id} value={qt.id}>
                       {qt.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Badge variant="secondary" className="text-xs">
-                📅 {cet4Data.metadata.exam_year}年{cet4Data.metadata.exam_month}月
-              </Badge>
-              <Badge variant="secondary" className="text-xs">
-                📋 {cet4Data.metadata.total_sets}套题
-              </Badge>
-              <Badge variant="secondary" className="text-xs">
-                📝 {getAllBlanks().length}空
+              <Badge
+                variant="outline"
+                className={`text-xs ${
+                  isDefaultData
+                    ? "border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
+                    : "border-amber-400 text-amber-600 dark:border-amber-600 dark:text-amber-400"
+                }`}
+              >
+                {isDefaultData ? "内置" : "自定义"}
               </Badge>
             </div>
           </div>
@@ -1769,6 +1895,9 @@ export default function HomePage() {
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        {/* Data Source Selector */}
+        <DataSourceSelector />
+
         {!hasData ? (
           <Card className="py-20">
             <CardContent className="text-center space-y-4">
@@ -1832,19 +1961,19 @@ export default function HomePage() {
           </div>
 
           <TabsContent value="statistics">
-            <StatisticsTab />
+            <StatisticsTab data={data} />
           </TabsContent>
           <TabsContent value="knowledge">
-            <KnowledgePointSearchTab />
+            <KnowledgePointSearchTab data={data} />
           </TabsContent>
           <TabsContent value="question">
-            <QuestionSearchTab />
+            <QuestionSearchTab data={data} />
           </TabsContent>
           <TabsContent value="fulltext">
-            <FullTextSearchTab />
+            <FullTextSearchTab data={data} />
           </TabsContent>
           <TabsContent value="word">
-            <WordAssociationTab />
+            <WordAssociationTab data={data} />
           </TabsContent>
           <TabsContent value="upload">
             <DataUploadTab />
@@ -1856,7 +1985,11 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-muted-foreground">
-          数据来源：201506P3SA.json · 标注版本：v{cet4Data.metadata.annotation_version} · 题型扩展：5种CET4题型
+          {isDefaultData ? (
+            <>数据来源：内置静态数据 · 标注版本：v{data.metadata.annotation_version} · 题型扩展：5种CET4题型</>
+          ) : (
+            <>数据来源：上传数据集 · 标注版本：v{data.metadata.annotation_version} · 套题数：{data.sets.length}</>
+          )}
         </div>
       </footer>
     </div>
