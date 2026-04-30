@@ -463,8 +463,8 @@ function StatisticsTab({ data }: { data: CET4Data }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.sets.map((set) => {
-                const blanks = set.passage.segments.filter(
+              {(data.sets ?? []).map((set) => {
+                const blanks = (set.passage?.segments ?? []).filter(
                   (s) => s.type === "blank"
                 );
                 const blankIds = blanks.map((s) =>
@@ -672,7 +672,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
   }, []);
 
   const filteredSets = useMemo(() => {
-    let sets = data.sets;
+    let sets = data.sets ?? [];
     if (setFilter !== "all") {
       sets = sets.filter((s) => s.set_id === Number(setFilter));
     }
@@ -681,7 +681,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
 
   const getBlanksForSet = useCallback(
     (set: ExamSet) => {
-      const blanks = set.passage.segments.filter(
+      const blanks = (set.passage?.segments ?? []).filter(
         (s) => s.type === "blank"
       ) as Array<{
         type: "blank";
@@ -714,7 +714,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部</SelectItem>
-              {data.sets.map((s) => (
+              {(data.sets ?? []).map((s) => (
                 <SelectItem key={s.set_id} value={String(s.set_id)}>
                   第{s.set_id}套
                 </SelectItem>
@@ -743,8 +743,8 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
       </Card>
 
       {/* Accordion per set */}
-      <Accordion type="multiple" defaultValue={filteredSets.map((s) => `set-${s.set_id}`)}>
-        {filteredSets.map((set) => {
+      <Accordion type="multiple" defaultValue={(filteredSets ?? []).map((s) => `set-${s.set_id}`)}>
+        {(filteredSets ?? []).map((set) => {
           const blanks = getBlanksForSet(set);
           return (
             <AccordionItem key={set.set_id} value={`set-${set.set_id}`}>
@@ -765,7 +765,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
                       <BookOpen className="h-3.5 w-3.5" /> 词库
                     </h4>
                     <div className="flex flex-wrap gap-1.5">
-                      {set.word_bank.map((wb) => {
+                      {(set.word_bank ?? []).map((wb) => {
                         const isUsed = blanks.some(
                           (b) => b.annotations.correct_answer === wb.letter
                         );
@@ -797,7 +797,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
                       <button
                         className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1 ml-auto"
                         onClick={() => {
-                          const allKeys = set.passage.segments
+                          const allKeys = (set.passage?.segments ?? [])
                             .filter((s) => s.type === "blank")
                             .map((s) => `${set.set_id}-${s.type === "blank" ? s.id : ""}`);
                           setRevealedBlanks((prev) => {
@@ -812,7 +812,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
                           });
                         }}
                       >
-                        {set.passage.segments.filter((s) => s.type === "blank").every((s) => revealedBlanks.has(`${set.set_id}-${s.id}`)) ? (
+                        {(set.passage?.segments ?? []).filter((s) => s.type === "blank").every((s) => revealedBlanks.has(`${set.set_id}-${s.id}`)) ? (
                           <><EyeOff className="h-3.5 w-3.5" /> 全部隐藏</>
                         ) : (
                           <><Eye className="h-3.5 w-3.5" /> 全部显示</>
@@ -820,7 +820,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
                       </button>
                     </div>
                     <div className="text-sm leading-relaxed bg-muted/30 rounded-lg p-4 whitespace-pre-wrap">
-                      {set.passage.segments.map((seg, i) => {
+                      {(set.passage?.segments ?? []).map((seg, i) => {
                         if (seg.type === "text") {
                           return <span key={i}>{seg.content}</span>;
                         }
@@ -976,7 +976,7 @@ function FullTextSearchTab({ data }: { data: CET4Data }) {
         <ScrollArea className="h-[calc(100vh-300px)]">
           <div className="space-y-4 pr-4">
             {Object.entries(groupedResults).map(([setId, items]) => {
-              const set = data.sets.find((s) => s.set_id === Number(setId));
+              const set = (data.sets ?? []).find((s) => s.set_id === Number(setId));
               return (
                 <Card key={setId}>
                   <CardHeader className="pb-2">
@@ -1723,7 +1723,7 @@ function DataSourceSelector() {
   const totalBlanks = useMemo(() => {
     let count = 0;
     for (const set of data.sets ?? []) {
-      for (const seg of set.passage.segments ?? []) {
+      for (const seg of set.passage?.segments ?? []) {
         if (seg.type === "blank") count++;
       }
     }

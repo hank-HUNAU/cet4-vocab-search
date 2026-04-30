@@ -64,3 +64,24 @@ Stage Summary:
 - 用户上传数据后可通过Checkbox勾选/全选
 - 勾选的数据集自动合并sets到分析视图中
 - .map() undefined错误已修复（添加?? []安全检查）
+---
+Task ID: 1
+Agent: main
+Task: 数据集上传功能完善 - 删除2015年6月数据、修复.map()报错、完善勾选/全选功能
+
+Work Log:
+- 检查数据库状态，确认2015年6月数据集已不存在（数据库为空）
+- 修复 cet4-utils.ts 中 normalizeToCET4Data() 函数，添加深度验证逻辑确保每个set的passage.segments和word_bank存在
+- 修复 cet4-utils.ts 中 enrichCET4Data() 函数，添加防御性null检查
+- 修复 cet4-utils.ts 中所有工具函数(getAllBlanks, getSubCategories等)，将 data.sets 改为 data?.sets ?? []
+- 修复 page.tsx 中4处防御性检查：QuestionSearchTab的data.sets、getBlanksForSet的passage.segments、FullTextSearchTab的data.sets.find、DataSourceSelector的passage?.segments
+- 验证勾选/全选功能代码完整：DataSourceSelector有全选checkbox和独立checkbox，DataUploadTab有全选checkbox，DataContext提供toggleDataset/selectAll/deselectAll方法
+- 验证过滤逻辑：mergeSelectedData()只合并selectedDatasetIds中的数据集，勾选的数据才在各Tab中显示
+- 删除测试上传的2015年6月数据集
+- 构建验证通过
+
+Stage Summary:
+- 2015年6月数据已从数据库删除
+- .map()报错已修复，所有数据访问添加了防御性null检查
+- 勾选/全选/数据过滤功能已完整实现
+- 构建成功，无错误

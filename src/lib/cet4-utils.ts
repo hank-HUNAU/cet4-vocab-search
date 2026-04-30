@@ -134,10 +134,10 @@ export function normalizeToCET4Data(raw: unknown): CET4Data {
     ? obj.metadata as Record<string, unknown>
     : {};
   const metadata = {
-    exam_year: (existingMeta.exam_year ?? obj.exam_year ?? 0) as number,
-    exam_month: (existingMeta.exam_month ?? obj.exam_month ?? 0) as number,
-    total_sets: (existingMeta.total_sets ?? obj.total_sets ?? 0) as number,
-    annotation_version: (existingMeta.annotation_version ?? obj.annotation_version ?? "2.0") as string,
+    exam_year: Number(existingMeta.exam_year ?? obj.exam_year ?? 0),
+    exam_month: Number(existingMeta.exam_month ?? obj.exam_month ?? 0),
+    total_sets: Number(existingMeta.total_sets ?? obj.total_sets ?? 0),
+    annotation_version: String(existingMeta.annotation_version ?? obj.annotation_version ?? "2.0"),
   };
   // Fix total_sets if zero but sets exist
   if (metadata.total_sets === 0 && Array.isArray(obj.sets)) {
@@ -150,22 +150,62 @@ export function normalizeToCET4Data(raw: unknown): CET4Data {
       ? obj.question_types as QuestionTypeRegistry[]
       : DEFAULT_QUESTION_TYPES;
 
-  // Ensure sets exists
-  let sets;
+  // Ensure sets exists - with deep validation
+  let rawSets: unknown[];
   if (Array.isArray(obj.sets) && obj.sets.length > 0) {
-    sets = obj.sets as CET4Data["sets"];
+    rawSets = obj.sets as unknown[];
   } else if (obj.word_bank && obj.passage) {
     // Format 2: Single set - wrap into CET4Data format
-    sets = [{
+    rawSets = [{
       set_id: 1,
       theme: (obj as Record<string, unknown>).theme as string || "未命名套题",
       question_type: "banked_cloze" as const,
-      word_bank: obj.word_bank as CET4Data["sets"][0]["word_bank"],
-      passage: obj.passage as CET4Data["sets"][0]["passage"],
+      word_bank: obj.word_bank,
+      passage: obj.passage,
     }];
   } else {
-    sets = [];
+    rawSets = [];
   }
+
+  // Deep-validate each set to ensure passage.segments and word_bank exist
+  const sets: CET4Data["sets"] = rawSets.map((rawSet, idx) => {
+    const s = (typeof rawSet === "object" && rawSet !== null) ? rawSet as Record<string, unknown> : {};
+    const passage = (typeof s.passage === "object" && s.passage !== null) ? s.passage as Record<string, unknown> : {};
+    const segments = Array.isArray(passage.segments) ? passage.segments : [];
+    const word_bank = Array.isArray(s.word_bank) ? s.word_bank : [];
+
+    // Validate segments: each must have type field
+    const validatedSegments = segments.map((seg: unknown) => {
+      const sg = (typeof seg === "object" && seg !== null) ? seg as Record<string, unknown> : {};
+      if (sg.type === "blank") {
+        const ann = (typeof sg.annotations === "object" && sg.annotations !== null) ? sg.annotations as Record<string, unknown> : {};
+        return {
+          type: "blank" as const,
+          id: Number(sg.id ?? 0),
+          position: String(sg.position ?? ""),
+          annotations: {
+            correct_answer: String(ann.correct_answer ?? ""),
+            correct_word: String(ann.correct_word ?? ""),
+            knowledge_points: Array.isArray(ann.knowledge_points) ? ann.knowledge_points : [],
+            difficulty: Number(ann.difficulty ?? 0),
+            frequency: String(ann.frequency ?? "低频"),
+          },
+        };
+      }
+      return {
+        type: "text" as const,
+        content: String(sg.content ?? ""),
+      };
+    });
+
+    return {
+      set_id: Number(s.set_id ?? idx + 1),
+      theme: String(s.theme ?? `套题${idx + 1}`),
+      question_type: (s.question_type as CET4Data["sets"][0]["question_type"]) ?? "banked_cloze",
+      word_bank: word_bank as CET4Data["sets"][0]["word_bank"],
+      passage: { segments: validatedSegments },
+    };
+  });
 
   return { metadata, question_types, sets };
 }
@@ -173,34 +213,40 @@ export function normalizeToCET4Data(raw: unknown): CET4Data {
 // ─── Enrich CET4Data: add missing difficulty/frequency fields ────────
 
 export function enrichCET4Data(data: CET4Data): CET4Data {
+  // Defensive: ensure sets exists and is an array
+  const safeSets = Array.isArray(data?.sets) ? data.sets : [];
   return {
     ...data,
-    sets: data.sets.map((set) => ({
-      ...set,
-      passage: {
-        segments: set.passage.segments.map((seg) => {
-          if (seg.type === "blank") {
-            const ann = seg.annotations;
-            const difficulty =
-              ann.difficulty ?? calculateDifficulty(ann.knowledge_points);
-            const frequency =
-              ann.frequency ??
-              getFrequency(
-                ann.knowledge_points[0]?.sub_category ?? ""
-              );
-            return {
-              ...seg,
-              annotations: {
-                ...ann,
-                difficulty,
-                frequency,
-              },
-            };
-          }
-          return seg;
-        }),
-      },
-    })),
+    sets: safeSets.map((set) => {
+      // Defensive: ensure passage.segments exists
+      const safeSegments = Array.isArray(set?.passage?.segments) ? set.passage.segments : [];
+      return {
+        ...set,
+        passage: {
+          segments: safeSegments.map((seg) => {
+            if (seg.type === "blank") {
+              const ann = seg.annotations;
+              // Defensive: ensure knowledge_points exists
+              const kps = Array.isArray(ann?.knowledge_points) ? ann.knowledge_points : [];
+              const difficulty =
+                (ann.difficulty && ann.difficulty > 0) ? ann.difficulty : calculateDifficulty(kps);
+              const frequency =
+                ann.frequency ??
+                getFrequency(kps[0]?.sub_category ?? "");
+              return {
+                ...seg,
+                annotations: {
+                  ...ann,
+                  difficulty,
+                  frequency,
+                },
+              };
+            }
+            return seg;
+          }),
+        },
+      };
+    }),
   };
 }
 
@@ -221,8 +267,8 @@ export function getAllBlanks(data: CET4Data): Array<{
     context: string;
   }> = [];
 
-  for (const set of data.sets) {
-    const segments = set.passage.segments;
+  for (const set of data?.sets ?? []) {
+    const segments = set?.passage?.segments ?? [];
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       if (seg.type === "blank") {
@@ -248,10 +294,10 @@ export function getSubCategories(
   category?: Category
 ): string[] {
   const subCats = new Set<string>();
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
       if (seg.type === "blank") {
-        for (const kp of seg.annotations.knowledge_points) {
+        for (const kp of seg.annotations?.knowledge_points ?? []) {
           if (!category || kp.category === category) {
             subCats.add(kp.sub_category);
           }
@@ -267,10 +313,10 @@ export function getSubCategoryDistribution(
   category: Category
 ): Array<{ name: string; count: number }> {
   const counts: Record<string, number> = {};
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
       if (seg.type === "blank") {
-        for (const kp of seg.annotations.knowledge_points) {
+        for (const kp of seg.annotations?.knowledge_points ?? []) {
           if (kp.category === category) {
             counts[kp.sub_category] = (counts[kp.sub_category] || 0) + 1;
           }
@@ -314,10 +360,10 @@ export function getWordPartOfSpeechDistribution(data: CET4Data): Array<{
     分词: 0,
   };
 
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
       if (seg.type === "blank") {
-        const word = seg.annotations.correct_word;
+        const word = seg.annotations?.correct_word ?? "";
         const pos = getWordPartOfSpeechFromGrammar(word, data);
         if (counts[pos] !== undefined) {
           counts[pos]++;
@@ -358,14 +404,14 @@ export function searchFullText(
 
   const lowerQuery = query.toLowerCase();
 
-  for (const set of data.sets) {
-    const segments = set.passage.segments;
+  for (const set of data?.sets ?? []) {
+    const segments = set?.passage?.segments ?? [];
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       const textContent =
         seg.type === "text"
           ? seg.content
-          : seg.annotations.correct_word;
+          : seg.annotations?.correct_word ?? "";
       const lowerContent = textContent.toLowerCase();
       const idx = lowerContent.indexOf(lowerQuery);
       if (idx !== -1) {
@@ -400,9 +446,9 @@ export function getWordAssociations(
     annotations: BlankAnnotation;
   }> = [];
 
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
-      if (seg.type === "blank" && seg.annotations.correct_word.toLowerCase() === word.toLowerCase()) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
+      if (seg.type === "blank" && (seg.annotations?.correct_word ?? "").toLowerCase() === word.toLowerCase()) {
         results.push({
           setId: set.set_id,
           theme: set.theme,
@@ -418,10 +464,10 @@ export function getWordAssociations(
 
 export function getRelatedWords(data: CET4Data, word: string): string[] {
   const subCats = new Set<string>();
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
-      if (seg.type === "blank" && seg.annotations.correct_word.toLowerCase() === word.toLowerCase()) {
-        for (const kp of seg.annotations.knowledge_points) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
+      if (seg.type === "blank" && (seg.annotations?.correct_word ?? "").toLowerCase() === word.toLowerCase()) {
+        for (const kp of seg.annotations?.knowledge_points ?? []) {
           subCats.add(kp.sub_category);
         }
       }
@@ -429,11 +475,11 @@ export function getRelatedWords(data: CET4Data, word: string): string[] {
   }
 
   const relatedWords = new Set<string>();
-  for (const set of data.sets) {
-    for (const seg of set.passage.segments) {
+  for (const set of data?.sets ?? []) {
+    for (const seg of set?.passage?.segments ?? []) {
       if (seg.type === "blank") {
-        for (const kp of seg.annotations.knowledge_points) {
-          if (subCats.has(kp.sub_category) && seg.annotations.correct_word.toLowerCase() !== word.toLowerCase()) {
+        for (const kp of seg.annotations?.knowledge_points ?? []) {
+          if (subCats.has(kp.sub_category) && (seg.annotations?.correct_word ?? "").toLowerCase() !== word.toLowerCase()) {
             relatedWords.add(seg.annotations.correct_word);
           }
         }
@@ -448,8 +494,8 @@ export function getAllWords(
   data: CET4Data
 ): Array<{ word: string; letter: string; setId: number }> {
   const results: Array<{ word: string; letter: string; setId: number }> = [];
-  for (const set of data.sets) {
-    for (const item of set.word_bank) {
+  for (const set of data?.sets ?? []) {
+    for (const item of set?.word_bank ?? []) {
       results.push({ word: item.word, letter: item.letter, setId: set.set_id });
     }
   }
