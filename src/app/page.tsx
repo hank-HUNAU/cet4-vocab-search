@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import {
   type Category,
   type BlankAnnotation,
@@ -1220,6 +1220,24 @@ function WordAssociationTab({ data }: { data: CET4Data }) {
 
 // ─── Data Upload Tab ─────────────────────────────────────────────
 
+/** Represents a file item in the pending upload list */
+interface PendingFile {
+  id: string;
+  file: File;
+  /** Relative path within a folder (or just the filename) */
+  relativePath: string;
+  /** Folder name if from folder upload */
+  folderName: string | null;
+  /** Whether the user has checked this file for upload */
+  checked: boolean;
+  /** Preview text (first 2000 chars of formatted JSON) */
+  preview: string | null;
+  /** Whether JSON parsing succeeded */
+  valid: boolean;
+  /** Error message if invalid */
+  error: string | null;
+}
+
 function DataUploadTab() {
   const {
     datasets,
@@ -1232,17 +1250,21 @@ function DataUploadTab() {
   } = useDataContext();
 
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{
-    success: boolean;
-    message: string;
+  const [uploadProgress, setUploadProgress] = useState<{
+    current: number;
+    total: number;
+    currentFile: string;
   } | null>(null);
+  const [uploadResults, setUploadResults] = useState<
+    { fileName: string; success: boolean; message: string }[]
+  >([]);
   const [dragActive, setDragActive] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [datasetName, setDatasetName] = useState("");
-  const [datasetDesc, setDatasetDesc] = useState("");
-  const [datasetTags, setDatasetTags] = useState("");
-  const [previewData, setPreviewData] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [loading, setLoading] = useState(false);
+  // Ref for hidden file input (single/multi file)
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Ref for hidden folder input
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDatasets = useCallback(async () => {
     setLoading(true);
@@ -1253,69 +1275,222 @@ function DataUploadTab() {
     }
   }, [refreshDatasets]);
 
-  const handleFileSelect = useCallback(
-    async (file: File) => {
-      if (!file.name.endsWith(".json") && file.type !== "application/json") {
-        setUploadResult({ success: false, message: "仅支持JSON文件" });
-        return;
+  // ── Parse a single file into a PendingFile ───────────────────────
+  const parseFile = useCallback(
+    async (file: File, relativePath: string, folderName: string | null): Promise<PendingFile> => {
+      const id = `${file.name}-${file.size}-${file.lastModified}`;
+      const isJson = file.name.endsWith(".json") || file.type === "application/json";
+      if (!isJson) {
+        return { id, file, relativePath, folderName, checked: false, preview: null, valid: false, error: "非JSON文件" };
       }
-      setSelectedFile(file);
-      setUploadResult(null);
-
-      // Read and preview
       try {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        setPreviewData(JSON.stringify(parsed, null, 2).slice(0, 2000));
-        // Auto-fill name from metadata if available
-        if (parsed.metadata) {
-          if (parsed.metadata.exam_year && parsed.metadata.exam_month) {
-            setDatasetName(
-              `CET4_${parsed.metadata.exam_year}${String(parsed.metadata.exam_month).padStart(2, "0")}_P3SA`
-            );
-          }
-        }
+        const preview = JSON.stringify(parsed, null, 2).slice(0, 2000);
+        return { id, file, relativePath, folderName, checked: true, preview, valid: true, error: null };
       } catch {
-        setPreviewData("JSON解析失败");
+        return { id, file, relativePath, folderName, checked: false, preview: "JSON解析失败", valid: false, error: "JSON格式无效" };
       }
     },
     []
   );
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragActive(false);
-      const file = e.dataTransfer.files[0];
-      if (file) handleFileSelect(file);
+  // ── Handle single/multi file selection ────────────────────────────
+  const handleFileInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+      const newFiles: PendingFile[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const pf = await parseFile(file, file.name, null);
+        newFiles.push(pf);
+      }
+      setPendingFiles((prev) => {
+        // Deduplicate by id
+        const existing = new Set(prev.map((p) => p.id));
+        return [...prev, ...newFiles.filter((nf) => !existing.has(nf.id))];
+      });
+      // Reset input value so the same file(s) can be re-selected
+      e.target.value = "";
     },
-    [handleFileSelect]
+    [parseFile]
   );
 
-  const handleUpload = useCallback(async () => {
-    if (!selectedFile) return;
-    setUploading(true);
-    setUploadResult(null);
-    try {
-      await uploadAndLoad(selectedFile, datasetName || undefined, datasetDesc || undefined, datasetTags || undefined);
-      setUploadResult({
-        success: true,
-        message: `数据集上传成功并已自动加载！`,
+  // ── Handle folder selection ───────────────────────────────────────
+  const handleFolderInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+      const newFiles: PendingFile[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // webkitRelativePath looks like "FolderName/sub/file.json" or "FolderName/file.json"
+        const relativePath = file.webkitRelativePath || file.name;
+        const parts = relativePath.split("/");
+        const folderName = parts.length > 1 ? parts[0] : null;
+        const pf = await parseFile(file, relativePath, folderName);
+        newFiles.push(pf);
+      }
+      setPendingFiles((prev) => {
+        const existing = new Set(prev.map((p) => p.id));
+        return [...prev, ...newFiles.filter((nf) => !existing.has(nf.id))];
       });
-      toast.success("上传成功", { description: "数据已自动加载到分析视图" });
-      setSelectedFile(null);
-      setPreviewData(null);
-      setDatasetName("");
-      setDatasetDesc("");
-      setDatasetTags("");
-    } catch {
-      setUploadResult({ success: false, message: "上传失败" });
-      toast.error("上传失败", { description: "请检查文件格式是否正确" });
-    } finally {
-      setUploading(false);
-    }
-  }, [selectedFile, datasetName, datasetDesc, datasetTags, uploadAndLoad]);
+      e.target.value = "";
+    },
+    [parseFile]
+  );
 
+  // ── Handle drag-and-drop ──────────────────────────────────────────
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragActive(false);
+      const items = e.dataTransfer.items;
+      const newFiles: PendingFile[] = [];
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const entry = items[i].webkitGetAsEntry?.();
+          if (entry) {
+            const entries = await traverseEntry(entry);
+            for (const { file, path, folder } of entries) {
+              const pf = await parseFile(file, path, folder);
+              newFiles.push(pf);
+            }
+          } else {
+            // Fallback: just use the file
+            const file = items[i].getAsFile();
+            if (file) {
+              const pf = await parseFile(file, file.name, null);
+              newFiles.push(pf);
+            }
+          }
+        }
+      } else {
+        // Fallback: use files
+        for (let i = 0; i < e.dataTransfer.files.length; i++) {
+          const file = e.dataTransfer.files[i];
+          const pf = await parseFile(file, file.name, null);
+          newFiles.push(pf);
+        }
+      }
+      setPendingFiles((prev) => {
+        const existing = new Set(prev.map((p) => p.id));
+        return [...prev, ...newFiles.filter((nf) => !existing.has(nf.id))];
+      });
+    },
+    [parseFile]
+  );
+
+  // ── Traverse a DataTransfer entry (file or directory) ────────────
+  const traverseEntry = useCallback(
+    (entry: FileSystemEntry): Promise<{ file: File; path: string; folder: string | null }[]> => {
+      return new Promise((resolve) => {
+        if (entry.isFile) {
+          (entry as FileSystemFileEntry).file((file) => {
+            const path = entry.fullPath.replace(/^\//, "") || file.name;
+            const parts = path.split("/");
+            const folder = parts.length > 1 ? parts[0] : null;
+            resolve([{ file, path, folder }]);
+          });
+        } else if (entry.isDirectory) {
+          const dirReader = (entry as FileSystemDirectoryEntry).createReader();
+          const allEntries: { file: File; path: string; folder: string | null }[] = [];
+          const readBatch = () => {
+            dirReader.readEntries(async (entries) => {
+              if (entries.length === 0) {
+                resolve(allEntries);
+                return;
+              }
+              for (const child of entries) {
+                const childResults = await traverseEntry(child);
+                allEntries.push(...childResults);
+              }
+              readBatch(); // readEntries may not return all entries in one call
+            });
+          };
+          readBatch();
+        } else {
+          resolve([]);
+        }
+      });
+    },
+    []
+  );
+
+  // ── Toggle a pending file's checked state ─────────────────────────
+  const togglePendingFile = useCallback((id: string) => {
+    setPendingFiles((prev) =>
+      prev.map((pf) => (pf.id === id ? { ...pf, checked: !pf.checked } : pf))
+    );
+  }, []);
+
+  // ── Select / deselect all pending files (only valid ones) ────────
+  const toggleSelectAllPending = useCallback(
+    (checked: boolean) => {
+      setPendingFiles((prev) =>
+        prev.map((pf) => (pf.valid ? { ...pf, checked } : pf))
+      );
+    },
+    []
+  );
+
+  // ── Remove a pending file from the list ───────────────────────────
+  const removePendingFile = useCallback((id: string) => {
+    setPendingFiles((prev) => prev.filter((pf) => pf.id !== id));
+  }, []);
+
+  // ── Clear all pending files ───────────────────────────────────────
+  const clearPendingFiles = useCallback(() => {
+    setPendingFiles([]);
+  }, []);
+
+  // ── Batch upload all checked pending files ────────────────────────
+  const handleBatchUpload = useCallback(async () => {
+    const filesToUpload = pendingFiles.filter((pf) => pf.checked && pf.valid);
+    if (filesToUpload.length === 0) return;
+
+    setUploading(true);
+    setUploadProgress({ current: 0, total: filesToUpload.length, currentFile: "" });
+    setUploadResults([]);
+    const results: { fileName: string; success: boolean; message: string }[] = [];
+
+    for (let i = 0; i < filesToUpload.length; i++) {
+      const pf = filesToUpload[i];
+      setUploadProgress({ current: i + 1, total: filesToUpload.length, currentFile: pf.file.name });
+      try {
+        // Auto-generate name from file name (strip .json)
+        const autoName = pf.file.name.replace(/\.json$/i, "");
+        await uploadAndLoad(pf.file, autoName, undefined, pf.folderName || undefined);
+        results.push({ fileName: pf.file.name, success: true, message: "上传成功" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "上传失败";
+        results.push({ fileName: pf.file.name, success: false, message: msg });
+      }
+    }
+
+    setUploadResults(results);
+    setUploadProgress(null);
+    setUploading(false);
+
+    // Remove successfully uploaded files from pending list
+    const successIds = new Set(
+      filesToUpload
+        .filter((_, idx) => results[idx]?.success)
+        .map((pf) => pf.id)
+    );
+    setPendingFiles((prev) => prev.filter((pf) => !successIds.has(pf.id)));
+
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
+    if (failCount === 0) {
+      toast.success("全部上传成功", { description: `成功上传 ${successCount} 个文件` });
+    } else {
+      toast.warning("部分上传失败", { description: `成功 ${successCount}，失败 ${failCount}` });
+    }
+  }, [pendingFiles, uploadAndLoad]);
+
+  // ── Delete an uploaded dataset ────────────────────────────────────
   const handleDelete = useCallback(
     async (id: string, name: string) => {
       if (!confirm(`确定删除数据集"${name}"？此操作不可撤销。`)) return;
@@ -1329,6 +1504,7 @@ function DataUploadTab() {
     [deleteDataset]
   );
 
+  // ── Export a dataset as JSON ──────────────────────────────────────
   const handleExport = useCallback(async (id: string, name: string) => {
     try {
       const res = await fetch(`/api/datasets?id=${id}&withData=true`);
@@ -1353,6 +1529,22 @@ function DataUploadTab() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // ── Computed values ───────────────────────────────────────────────
+  const validPendingFiles = pendingFiles.filter((pf) => pf.valid);
+  const checkedCount = validPendingFiles.filter((pf) => pf.checked).length;
+  const allValidChecked = validPendingFiles.length > 0 && validPendingFiles.every((pf) => pf.checked);
+
+  // Group pending files by folder
+  const folderGroups = useMemo(() => {
+    const groups = new Map<string, PendingFile[]>();
+    for (const pf of pendingFiles) {
+      const key = pf.folderName || "__no_folder__";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(pf);
+    }
+    return groups;
+  }, [pendingFiles]);
+
   return (
     <div className="space-y-6">
       {/* Upload Area */}
@@ -1363,7 +1555,7 @@ function DataUploadTab() {
             JSON文件上传
           </CardTitle>
           <CardDescription>
-            上传CET4标注数据JSON文件，系统自动解析并存储到数据库
+            上传CET4标注数据JSON文件，支持选择文件、多文件、文件夹上传
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1380,16 +1572,6 @@ function DataUploadTab() {
             }}
             onDragLeave={() => setDragActive(false)}
             onDrop={handleDrop}
-            onClick={() => {
-              const input = document.createElement("input");
-              input.type = "file";
-              input.accept = ".json";
-              input.onchange = (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0];
-                if (file) handleFileSelect(file);
-              };
-              input.click();
-            }}
           >
             <Upload
               className={`h-10 w-10 mx-auto mb-3 ${
@@ -1397,125 +1579,243 @@ function DataUploadTab() {
               }`}
             />
             <p className="text-sm font-medium">
-              拖拽JSON文件到此处，或点击选择文件
+              拖拽JSON文件或文件夹到此处
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              支持 .json 格式，最大 10MB
+              支持 .json 格式，可拖入文件夹自动扫描
             </p>
           </div>
 
-          {/* Selected File Info */}
-          {selectedFile && (
+          {/* Action buttons row */}
+          <div className="flex flex-wrap gap-3">
+            {/* Hidden file input for single/multi file selection */}
+            <input
+              type="file"
+              accept=".json"
+              multiple
+              className="hidden"
+              ref={fileInputRef}
+              onChange={handleFileInputChange}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <FileJson className="h-4 w-4" />
+              选择文件
+            </button>
+
+            {/* Hidden folder input */}
+            <input
+              type="file"
+              className="hidden"
+              ref={folderInputRef}
+              onChange={handleFolderInputChange}
+              // @ts-expect-error webkitdirectory is non-standard but widely supported
+              webkitdirectory=""
+              directory=""
+              multiple
+            />
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 border-2 border-teal-600 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/30 rounded-lg font-medium text-sm transition-colors"
+            >
+              <Layers className="h-4 w-4" />
+              选择文件夹
+            </button>
+
+            {pendingFiles.length > 0 && (
+              <button
+                onClick={clearPendingFiles}
+                className="flex items-center gap-2 px-4 py-2.5 border border-muted-foreground/30 text-muted-foreground hover:bg-muted/30 rounded-lg font-medium text-sm transition-colors ml-auto"
+              >
+                <Trash2 className="h-4 w-4" />
+                清空列表
+              </button>
+            )}
+          </div>
+
+          {/* Pending Files List with checkboxes */}
+          {pendingFiles.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 bg-teal-50 dark:bg-teal-950/30 rounded-lg">
-                <FileJson className="h-8 w-8 text-teal-600" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">
-                    {selectedFile.name}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatFileSize(selectedFile.size)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    setSelectedFile(null);
-                    setPreviewData(null);
-                  }}
-                  className="p-1 hover:bg-teal-100 dark:hover:bg-teal-900 rounded"
-                >
-                  <X className="h-4 w-4 text-muted-foreground" />
-                </button>
-              </div>
-
-              {/* Metadata Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                    数据集名称
-                  </label>
-                  <Input
-                    placeholder="自动生成或手动输入"
-                    value={datasetName}
-                    onChange={(e) => setDatasetName(e.target.value)}
-                    className="h-8 text-sm"
+              {/* Select All Bar */}
+              <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all-pending"
+                    checked={allValidChecked}
+                    onCheckedChange={(checked) => toggleSelectAllPending(!!checked)}
                   />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                    描述
+                  <label htmlFor="select-all-pending" className="text-sm font-medium cursor-pointer">
+                    全选 ({checkedCount}/{validPendingFiles.length} 个有效文件)
                   </label>
-                  <Input
-                    placeholder="可选描述信息"
-                    value={datasetDesc}
-                    onChange={(e) => setDatasetDesc(e.target.value)}
-                    className="h-8 text-sm"
-                  />
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                    标签（逗号分隔）
-                  </label>
-                  <Input
-                    placeholder="如: CET4,2015,词汇"
-                    value={datasetTags}
-                    onChange={(e) => setDatasetTags(e.target.value)}
-                    className="h-8 text-sm"
-                  />
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    共 {pendingFiles.length} 个文件
+                    {pendingFiles.filter((pf) => !pf.valid).length > 0 && (
+                      <span className="text-amber-600 ml-1">
+                        ({pendingFiles.filter((pf) => !pf.valid).length} 个无效)
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={handleBatchUpload}
+                    disabled={uploading || checkedCount === 0}
+                    className="flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white rounded-lg font-medium text-sm transition-colors"
+                  >
+                    {uploading ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        上传中 ({uploadProgress?.current}/{uploadProgress?.total})...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-4 w-4" />
+                        上传选中 ({checkedCount})
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* JSON Preview */}
-              {previewData && (
+              {/* Upload progress */}
+              {uploadProgress && (
+                <div className="p-3 bg-teal-50 dark:bg-teal-950/30 rounded-lg border border-teal-200 dark:border-teal-800">
+                  <div className="flex items-center gap-2 text-sm text-teal-700 dark:text-teal-300">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>
+                      正在上传: {uploadProgress.currentFile} ({uploadProgress.current}/{uploadProgress.total})
+                    </span>
+                  </div>
+                  <div className="mt-2 h-2 bg-teal-100 dark:bg-teal-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-teal-600 rounded-full transition-all duration-300"
+                      style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Upload results */}
+              {uploadResults.length > 0 && (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {uploadResults.map((r, i) => (
+                    <div
+                      key={i}
+                      className={`flex items-center gap-2 p-2 rounded text-xs ${
+                        r.success
+                          ? "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300"
+                          : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
+                      }`}
+                    >
+                      {r.success ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+                      ) : (
+                        <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                      )}
+                      <span className="font-medium">{r.fileName}</span>
+                      <span>{r.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* File list grouped by folder */}
+              <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                {Array.from(folderGroups.entries()).map(([folderKey, files]) => (
+                  <div key={folderKey} className="border rounded-lg overflow-hidden">
+                    {/* Folder header */}
+                    {folderKey !== "__no_folder__" && (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
+                        <Layers className="h-4 w-4 text-amber-500" />
+                        <span className="text-sm font-medium">{folderKey}</span>
+                        <Badge variant="secondary" className="text-xs">
+                          {files.filter((f) => f.valid).length}/{files.length} 有效
+                        </Badge>
+                        <div className="ml-auto">
+                          <Checkbox
+                            checked={files.filter((f) => f.valid).length > 0 && files.filter((f) => f.valid).every((f) => f.checked)}
+                            onCheckedChange={(checked) => {
+                              setPendingFiles((prev) =>
+                                prev.map((pf) => {
+                                  if (pf.folderName === folderKey && pf.valid) {
+                                    return { ...pf, checked: !!checked };
+                                  }
+                                  return pf;
+                                })
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {/* File items */}
+                    <div className="divide-y">
+                      {files.map((pf) => (
+                        <div
+                          key={pf.id}
+                          className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${
+                            pf.valid
+                              ? pf.checked
+                                ? "bg-teal-50/50 dark:bg-teal-950/20"
+                                : "hover:bg-muted/20"
+                              : "bg-red-50/30 dark:bg-red-950/10 opacity-60"
+                          }`}
+                        >
+                          <Checkbox
+                            checked={pf.checked}
+                            disabled={!pf.valid}
+                            onCheckedChange={() => togglePendingFile(pf.id)}
+                          />
+                          <FileJson className={`h-5 w-5 flex-shrink-0 ${pf.valid ? "text-teal-600" : "text-red-400"}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium truncate">
+                                {folderKey === "__no_folder__" ? pf.file.name : pf.relativePath.split("/").slice(1).join("/") || pf.file.name}
+                              </span>
+                              {pf.valid ? (
+                                <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300 text-[10px] px-1.5 py-0">
+                                  有效
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 text-[10px] px-1.5 py-0">
+                                  无效
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span>{formatFileSize(pf.file.size)}</span>
+                              {pf.error && <span className="text-red-500">{pf.error}</span>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => removePendingFile(pf.id)}
+                            className="p-1 hover:bg-muted rounded transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Preview for single selected file */}
+              {validPendingFiles.length === 1 && validPendingFiles[0].preview && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                    数据预览
+                    数据预览: {validPendingFiles[0].file.name}
                   </label>
                   <ScrollArea className="h-40 rounded-lg border bg-muted/30 p-3">
                     <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-                      {previewData}
-                      {previewData.length >= 2000 && "\n... (已截断)"}
+                      {validPendingFiles[0].preview}
+                      {validPendingFiles[0].preview!.length >= 2000 && "\n... (已截断)"}
                     </pre>
                   </ScrollArea>
                 </div>
               )}
-
-              {/* Upload Button */}
-              <button
-                onClick={handleUpload}
-                disabled={uploading}
-                className="w-full h-10 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors"
-              >
-                {uploading ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    上传中...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4" />
-                    上传并加载到分析视图
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          {/* Upload Result */}
-          {uploadResult && (
-            <div
-              className={`flex items-center gap-2 p-3 rounded-lg text-sm ${
-                uploadResult.success
-                  ? "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300"
-                  : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
-              }`}
-            >
-              {uploadResult.success ? (
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-              ) : (
-                <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              )}
-              {uploadResult.message}
             </div>
           )}
         </CardContent>
@@ -1544,7 +1844,7 @@ function DataUploadTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {loading && datasets.length === 0 ? (
+          {(ctxLoading || loading) && datasets.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <RefreshCw className="h-6 w-6 mx-auto mb-2 animate-spin" />
               <p className="text-sm">加载中...</p>
@@ -1603,7 +1903,7 @@ function DataUploadTab() {
                           {ds.examYear}年{ds.examMonth}月
                         </Badge>
                       )}
-                      {ds.totalSets && (
+                      {ds.totalSets != null && (
                         <Badge variant="secondary" className="text-xs">
                           {ds.totalSets}套题
                         </Badge>
@@ -1718,7 +2018,8 @@ function DataSourceSelector() {
     deselectAll,
   } = useDataContext();
 
-  const [isExpanded, setIsExpanded] = useState(false);
+  const hasSelectedData = selectedDatasetIds.size > 0;
+  const [isExpanded, setIsExpanded] = useState(!hasSelectedData);
 
   const totalBlanks = useMemo(() => {
     let count = 0;
@@ -1922,22 +2223,6 @@ export default function HomePage() {
         {/* Data Source Selector */}
         <DataSourceSelector />
 
-        {!hasData ? (
-          <Card className="py-20">
-            <CardContent className="text-center space-y-4">
-              <Database className="h-16 w-16 mx-auto text-teal-300" />
-              <h2 className="text-xl font-semibold text-foreground">{selectedQt?.label}</h2>
-              <p className="text-muted-foreground max-w-md mx-auto">
-                {selectedQt?.description}
-              </p>
-              <p className="text-sm text-teal-600 bg-teal-50 dark:bg-teal-950/50 rounded-lg px-4 py-2 inline-block">
-                {datasets.length === 0
-                  ? "请先上传数据集以开始分析"
-                  : "请在上方勾选数据集以查看数据"}
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="mb-6">
             <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-muted/50 p-1.5 rounded-xl">
@@ -1986,26 +2271,61 @@ export default function HomePage() {
             </TabsList>
           </div>
 
-          <TabsContent value="statistics">
-            <StatisticsTab data={data} />
-          </TabsContent>
-          <TabsContent value="knowledge">
-            <KnowledgePointSearchTab data={data} />
-          </TabsContent>
-          <TabsContent value="question">
-            <QuestionSearchTab data={data} />
-          </TabsContent>
-          <TabsContent value="fulltext">
-            <FullTextSearchTab data={data} />
-          </TabsContent>
-          <TabsContent value="word">
-            <WordAssociationTab data={data} />
-          </TabsContent>
+          {!hasData ? (
+            <TabsContent value="statistics" forceMount className="hidden">
+              <StatisticsTab data={data} />
+            </TabsContent>
+          ) : (
+            <>
+              <TabsContent value="statistics">
+                <StatisticsTab data={data} />
+              </TabsContent>
+              <TabsContent value="knowledge">
+                <KnowledgePointSearchTab data={data} />
+              </TabsContent>
+              <TabsContent value="question">
+                <QuestionSearchTab data={data} />
+              </TabsContent>
+              <TabsContent value="fulltext">
+                <FullTextSearchTab data={data} />
+              </TabsContent>
+              <TabsContent value="word">
+                <WordAssociationTab data={data} />
+              </TabsContent>
+            </>
+          )}
+
+          {/* No-data prompt - always visible in analysis tabs when no data */}
+          {!hasData && activeTab !== "upload" && (
+            <Card className="py-16">
+              <CardContent className="text-center space-y-4">
+                <Database className="h-16 w-16 mx-auto text-teal-300" />
+                <h2 className="text-xl font-semibold text-foreground">{selectedQt?.label}</h2>
+                <p className="text-muted-foreground max-w-md mx-auto">
+                  {selectedQt?.description}
+                </p>
+                <p className="text-sm text-teal-600 bg-teal-50 dark:bg-teal-950/50 rounded-lg px-4 py-2 inline-block">
+                  {datasets.length === 0
+                    ? "请先上传数据集以开始分析"
+                    : "请在上方勾选数据集以查看数据"}
+                </p>
+                <div>
+                  <button
+                    onClick={() => setActiveTab("upload")}
+                    className="mt-2 px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium text-sm flex items-center gap-2 mx-auto transition-colors"
+                  >
+                    <Upload className="h-4 w-4" />
+                    前往上传数据
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <TabsContent value="upload">
             <DataUploadTab />
           </TabsContent>
         </Tabs>
-        )}
       </main>
 
       {/* Footer */}
