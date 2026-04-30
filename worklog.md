@@ -40,3 +40,27 @@ Stage Summary:
 - 数据流：上传JSON → parse → normalizeToCET4Data(补全metadata/question_types/sets) → enrichCET4Data(补全difficulty/frequency) → 渲染
 - 支持4种格式：标准CET4Data、单套题、缺metadata、缺question_types
 - ErrorBoundary 兜底防白屏
+
+---
+Task ID: 1-7
+Agent: Main Agent
+Task: 删除2015年6月数据，实现数据集勾选/全选功能，修复.map()错误
+
+Work Log:
+- 删除了cet4-data.ts中2015年6月的3套硬编码数据，sets设为空数组
+- 重构DataContext支持多数据集选择：新增datasetDataMap、selectedDatasetIds、selectAll/deselectAll/toggleDataset
+- 实现mergeSelectedData函数，合并所有勾选数据集的sets
+- 修改DataSourceSelector从Select下拉框改为Checkbox勾选模式，含全选功能
+- 在DataUploadTab数据集列表中也添加了全选Checkbox
+- 创建了/api/upload路由处理JSON文件上传
+- 添加null safety (?? []) 防止.map()报错
+- 修复selectAll函数的stale closure问题（使用datasetsRef）
+- 修复refreshDatasets的stale closure问题（使用functional update）
+- 修复loadDataset移除datasetDataMap依赖（始终从API加载）
+
+Stage Summary:
+- 所有代码编译通过 (next build成功)
+- 2015年6月内置数据已删除，系统启动时为空
+- 用户上传数据后可通过Checkbox勾选/全选
+- 勾选的数据集自动合并sets到分析视图中
+- .map() undefined错误已修复（添加?? []安全检查）

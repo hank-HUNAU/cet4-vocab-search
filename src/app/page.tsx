@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -447,7 +448,7 @@ function StatisticsTab({ data }: { data: CET4Data }) {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">题目套数概览</CardTitle>
-          <CardDescription>{data.sets.length}套题目的基本信息</CardDescription>
+          <CardDescription>{(data.sets ?? []).length}套题目的基本信息</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -1226,9 +1227,8 @@ function DataUploadTab() {
     uploadAndLoad,
     deleteDataset,
     refreshDatasets,
-    loadDataset,
-    resetToDefault,
-    currentDatasetId,
+    selectedDatasetIds,
+    toggleDataset,
   } = useDataContext();
 
   const [uploading, setUploading] = useState(false);
@@ -1557,21 +1557,46 @@ function DataUploadTab() {
             </div>
           ) : (
             <div className="space-y-3">
+              {/* Select All in upload tab */}
+              <div className="flex items-center gap-2 pb-2 border-b">
+                <Checkbox
+                  id="select-all-upload"
+                  checked={datasets.length > 0 && datasets.every((ds) => selectedDatasetIds.has(ds.id))}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      datasets.forEach((ds) => {
+                        if (!selectedDatasetIds.has(ds.id)) toggleDataset(ds.id);
+                      });
+                    } else {
+                      datasets.forEach((ds) => {
+                        if (selectedDatasetIds.has(ds.id)) toggleDataset(ds.id);
+                      });
+                    }
+                  }}
+                />
+                <label htmlFor="select-all-upload" className="text-sm font-medium cursor-pointer">
+                  全选 ({selectedDatasetIds.size}/{datasets.length})
+                </label>
+              </div>
               {datasets.map((ds: DatasetItem) => (
                 <div
                   key={ds.id}
                   className={`flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/30 transition-colors ${
-                    currentDatasetId === ds.id
+                    selectedDatasetIds.has(ds.id)
                       ? "border-teal-400 bg-teal-50/50 dark:bg-teal-950/20"
                       : ""
                   }`}
                 >
+                  <Checkbox
+                    checked={selectedDatasetIds.has(ds.id)}
+                    onCheckedChange={() => toggleDataset(ds.id)}
+                  />
                   <FileJson className="h-8 w-8 text-teal-600 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-medium">{ds.name}</p>
-                      {currentDatasetId === ds.id && (
-                        <Badge className="bg-teal-600 text-white text-xs">当前加载</Badge>
+                      {selectedDatasetIds.has(ds.id) && (
+                        <Badge className="bg-teal-600 text-white text-xs">已选中</Badge>
                       )}
                       {ds.examYear && ds.examMonth && (
                         <Badge variant="secondary" className="text-xs">
@@ -1598,15 +1623,6 @@ function DataUploadTab() {
                     )}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {currentDatasetId !== ds.id && (
-                      <button
-                        onClick={() => loadDataset(ds.id)}
-                        className="p-1.5 hover:bg-teal-50 dark:hover:bg-teal-950 rounded transition-colors"
-                        title="加载此数据集"
-                      >
-                        <Database className="h-4 w-4 text-teal-600" />
-                      </button>
-                    )}
                     <button
                       onClick={() => handleExport(ds.id, ds.name)}
                       className="p-1.5 hover:bg-teal-50 dark:hover:bg-teal-950 rounded transition-colors"
@@ -1692,26 +1708,30 @@ function DataUploadTab() {
 function DataSourceSelector() {
   const {
     data,
-    isDefaultData,
-    currentDatasetId,
     datasets,
+    selectedDatasetIds,
+    isAllSelected,
     isLoading,
     error,
-    loadDataset,
-    resetToDefault,
+    toggleDataset,
+    selectAll,
+    deselectAll,
   } = useDataContext();
 
   const [isExpanded, setIsExpanded] = useState(false);
 
   const totalBlanks = useMemo(() => {
     let count = 0;
-    for (const set of data.sets) {
-      for (const seg of set.passage.segments) {
+    for (const set of data.sets ?? []) {
+      for (const seg of set.passage.segments ?? []) {
         if (seg.type === "blank") count++;
       }
     }
     return count;
   }, [data]);
+
+  const selectedCount = selectedDatasetIds.size;
+  const totalCount = datasets.length;
 
   return (
     <Card className="mb-4 border-teal-200 dark:border-teal-800">
@@ -1723,49 +1743,12 @@ function DataSourceSelector() {
               <Database className="h-4 w-4 text-teal-600" />
               <span className="text-sm font-medium">数据源：</span>
             </div>
-            <Select
-              value={currentDatasetId || "__default__"}
-              onValueChange={(val) => {
-                if (val === "__default__") {
-                  resetToDefault();
-                } else {
-                  loadDataset(val);
-                }
-              }}
-            >
-              <SelectTrigger className="w-[240px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__default__">
-                  📦 内置数据{data.metadata.exam_year ? ` (${data.metadata.exam_year}年${data.metadata.exam_month}月)` : ""}
-                </SelectItem>
-                {datasets.map((ds) => (
-                  <SelectItem key={ds.id} value={ds.id}>
-                    📁 {ds.name}
-                    {ds.examYear && ds.examMonth
-                      ? ` (${ds.examYear}年${ds.examMonth}月)`
-                      : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge
-                variant="outline"
-                className={`text-xs ${
-                  isDefaultData
-                    ? "border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
-                    : "border-amber-400 text-amber-600 dark:border-amber-600 dark:text-amber-400"
-                }`}
-              >
-                {isDefaultData ? "内置数据" : "自定义数据"}
+              <Badge variant="outline" className="text-xs border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400">
+                已选择 {selectedCount}/{totalCount} 个数据集
               </Badge>
               <Badge variant="secondary" className="text-xs">
-                📅 {data.metadata.exam_year ? `${data.metadata.exam_year}年${data.metadata.exam_month}月` : "自定义数据"}
-              </Badge>
-              <Badge variant="secondary" className="text-xs">
-                📋 {data.sets.length}套题
+                📋 {data.sets?.length ?? 0}套题
               </Badge>
               <Badge variant="secondary" className="text-xs">
                 📝 {totalBlanks}空
@@ -1773,17 +1756,8 @@ function DataSourceSelector() {
             </div>
           </div>
 
-          {/* Right: reset + expand */}
+          {/* Right: expand */}
           <div className="flex items-center gap-2">
-            {!isDefaultData && (
-              <button
-                onClick={resetToDefault}
-                className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                恢复默认数据
-              </button>
-            )}
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-2 py-1 rounded hover:bg-muted/50 transition-colors"
@@ -1791,37 +1765,90 @@ function DataSourceSelector() {
               {isExpanded ? (
                 <><ChevronUp className="h-3.5 w-3.5" /> 收起</>
               ) : (
-                <><ChevronDown className="h-3.5 w-3.5" /> 详情</>
+                <><ChevronDown className="h-3.5 w-3.5" /> 选择数据集</>
               )}
             </button>
           </div>
         </div>
 
-        {/* Expanded: metadata + error */}
+        {/* Expanded: dataset checkboxes + error */}
         {isExpanded && (
-          <div className="mt-3 pt-3 border-t space-y-2">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-muted-foreground">
-              <div>
-                <span className="font-medium text-foreground">标注版本：</span>
-                v{data.metadata.annotation_version || "2.0"}
+          <div className="mt-3 pt-3 border-t space-y-3">
+            {/* Select All / Deselect All */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="select-all"
+                  checked={isAllSelected}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      selectAll();
+                    } else {
+                      deselectAll();
+                    }
+                  }}
+                />
+                <label htmlFor="select-all" className="text-sm font-medium cursor-pointer">
+                  全选
+                </label>
               </div>
-              <div>
-                <span className="font-medium text-foreground">题目类型：</span>
-                {(data.question_types ?? []).map((qt) => qt.label).join("、") || "未指定"}
-              </div>
-              <div>
-                <span className="font-medium text-foreground">数据来源：</span>
-                {isDefaultData ? "内置静态数据" : `上传数据集 (${currentDatasetId?.slice(0, 8)}...)`}
-              </div>
-              <div>
-                <span className="font-medium text-foreground">加载状态：</span>
-                {isLoading ? (
-                  <span className="text-amber-600">加载中...</span>
-                ) : (
-                  <span className="text-green-600">已就绪</span>
-                )}
-              </div>
+              <span className="text-xs text-muted-foreground">
+                已选择 {selectedCount}/{totalCount} 个数据集
+              </span>
             </div>
+
+            {/* Dataset list with checkboxes */}
+            {datasets.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                <Database className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">暂无数据集，请先上传数据</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {datasets.map((ds) => (
+                  <div
+                    key={ds.id}
+                    className={`flex items-center gap-3 p-2.5 border rounded-lg hover:bg-muted/30 transition-colors cursor-pointer ${
+                      selectedDatasetIds.has(ds.id)
+                        ? "border-teal-400 bg-teal-50/50 dark:bg-teal-950/20"
+                        : ""
+                    }`}
+                    onClick={() => toggleDataset(ds.id)}
+                  >
+                    <Checkbox
+                      id={`ds-${ds.id}`}
+                      checked={selectedDatasetIds.has(ds.id)}
+                      onCheckedChange={() => toggleDataset(ds.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <label htmlFor={`ds-${ds.id}`} className="text-sm font-medium cursor-pointer">
+                          {ds.name}
+                        </label>
+                        {ds.examYear && ds.examMonth && (
+                          <Badge variant="secondary" className="text-xs">
+                            {ds.examYear}年{ds.examMonth}月
+                          </Badge>
+                        )}
+                        {ds.totalSets != null && (
+                          <Badge variant="secondary" className="text-xs">
+                            {ds.totalSets}套题
+                          </Badge>
+                        )}
+                      </div>
+                      {ds.description && (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                          {ds.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Error */}
             {error && (
               <div className="flex items-center gap-2 p-2 rounded bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300 text-xs">
                 <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
@@ -1838,12 +1865,12 @@ function DataSourceSelector() {
 // ─── Main Page ───────────────────────────────────────────────────
 
 export default function HomePage() {
-  const { data, isDefaultData } = useDataContext();
+  const { data, selectedDatasetIds, datasets } = useDataContext();
   const [activeTab, setActiveTab] = useState("statistics");
   const [questionType, setQuestionType] = useState("banked_cloze");
 
   const selectedQt = data.question_types?.find((qt) => qt.id === questionType);
-  // Show data if there are sets available, or if using banked_cloze (default)
+  // Show data if there are sets available
   const hasData = data.sets && data.sets.length > 0;
 
   return (
@@ -1881,13 +1908,9 @@ export default function HomePage() {
               </Select>
               <Badge
                 variant="outline"
-                className={`text-xs ${
-                  isDefaultData
-                    ? "border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
-                    : "border-amber-400 text-amber-600 dark:border-amber-600 dark:text-amber-400"
-                }`}
+                className="text-xs border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
               >
-                {isDefaultData ? "内置" : "自定义"}
+                {selectedDatasetIds.size > 0 ? `${selectedDatasetIds.size}个数据集` : "未选择"}
               </Badge>
             </div>
           </div>
@@ -1908,7 +1931,9 @@ export default function HomePage() {
                 {selectedQt?.description}
               </p>
               <p className="text-sm text-teal-600 bg-teal-50 dark:bg-teal-950/50 rounded-lg px-4 py-2 inline-block">
-                该题型数据尚未录入，敬请期待
+                {datasets.length === 0
+                  ? "请先上传数据集以开始分析"
+                  : "请在上方勾选数据集以查看数据"}
               </p>
             </CardContent>
           </Card>
@@ -1986,10 +2011,10 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-muted-foreground">
-          {isDefaultData ? (
-            <>数据来源：内置静态数据 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 题型扩展：{(data.question_types ?? []).length}种CET4题型</>
+          {selectedDatasetIds.size > 0 ? (
+            <>数据来源：已选数据集 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 套题数：{(data.sets ?? []).length}</>
           ) : (
-            <>数据来源：上传数据集 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 套题数：{data.sets.length}</>
+            <>数据来源：未选择数据集 · 请上传并勾选数据集以开始分析</>
           )}
         </div>
       </footer>

@@ -7,9 +7,10 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   type ReactNode,
 } from "react";
-import { cet4Data, type CET4Data } from "@/data/cet4-data";
+import { type CET4Data } from "@/data/cet4-data";
 import { enrichCET4Data, normalizeToCET4Data } from "@/lib/cet4-utils";
 
 // ─── Dataset type (matches the API response) ────────────────────────
@@ -28,26 +29,73 @@ export interface DatasetItem {
   createdAt: string;
 }
 
+// ─── Default empty CET4Data ─────────────────────────────────────────
+
+const EMPTY_CET4_DATA: CET4Data = {
+  metadata: {
+    exam_year: 0,
+    exam_month: 0,
+    total_sets: 0,
+    annotation_version: "2.0",
+  },
+  question_types: [
+    {
+      id: "banked_cloze",
+      label: "词汇匹配（选词填空）",
+      description: "从15个词中选出10个填入文章空白处，考查词汇语法综合运用能力",
+    },
+    {
+      id: "reading_comprehension",
+      label: "阅读理解",
+      description: "阅读文章并回答问题，考查阅读理解能力",
+    },
+    {
+      id: "listening",
+      label: "听力理解",
+      description: "听取录音并回答问题，考查听力理解能力",
+    },
+    {
+      id: "translation",
+      label: "段落翻译",
+      description: "将中文段落翻译为英文，考查翻译能力",
+    },
+    {
+      id: "writing",
+      label: "写作",
+      description: "根据提示写一篇短文，考查写作能力",
+    },
+  ],
+  sets: [],
+};
+
 // ─── Context shape ──────────────────────────────────────────────────
 
 interface DataContextShape {
-  /** The current CET4Data being displayed (enriched with difficulty/frequency) */
+  /** The merged CET4Data from all selected datasets (enriched) */
   data: CET4Data;
-  /** Whether we are using the built-in static data */
-  isDefaultData: boolean;
-  /** Currently active dataset ID, or null for built-in data */
-  currentDatasetId: string | null;
+  /** Map of all loaded dataset data by ID */
+  datasetDataMap: Map<string, CET4Data>;
+  /** Set of currently selected dataset IDs */
+  selectedDatasetIds: Set<string>;
+  /** All available dataset IDs */
+  allDatasetIds: string[];
+  /** Whether all datasets are selected */
+  isAllSelected: boolean;
   /** List of uploaded datasets (without full data payload) */
   datasets: DatasetItem[];
   /** Loading state for data operations */
   isLoading: boolean;
   /** Error message if any */
   error: string | null;
-  /** Load a dataset from the API by ID */
+  /** Toggle a dataset's selection */
+  toggleDataset: (id: string) => void;
+  /** Select all datasets */
+  selectAll: () => void;
+  /** Deselect all datasets */
+  deselectAll: () => void;
+  /** Load a dataset's data from the API by ID (adds to map & auto-selects) */
   loadDataset: (id: string) => Promise<void>;
-  /** Reset to the built-in static data */
-  resetToDefault: () => void;
-  /** Upload a file and auto-load it */
+  /** Upload a file and auto-select it */
   uploadAndLoad: (
     file: File,
     name?: string,
@@ -56,22 +104,129 @@ interface DataContextShape {
   ) => Promise<void>;
   /** Delete a dataset */
   deleteDataset: (id: string) => Promise<void>;
-  /** Refresh the dataset list */
+  /** Refresh the dataset list and load all data */
   refreshDatasets: () => Promise<void>;
+  /** Reload all datasets' data */
+  refreshAllData: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextShape | null>(null);
 
+// ─── Merge selected datasets into a single CET4Data ────────────────
+
+function mergeSelectedData(
+  datasetDataMap: Map<string, CET4Data>,
+  selectedIds: Set<string>
+): CET4Data {
+  if (selectedIds.size === 0) {
+    return EMPTY_CET4_DATA;
+  }
+
+  const allSets: CET4Data["sets"] = [];
+  const allQuestionTypes: CET4Data["question_types"] = [];
+  let globalSetIdCounter = 0;
+
+  for (const id of selectedIds) {
+    const dsData = datasetDataMap.get(id);
+    if (!dsData) continue;
+
+    for (const set of dsData.sets ?? []) {
+      globalSetIdCounter++;
+      // Prefix set_id with dataset info to make unique across datasets
+      allSets.push({
+        ...set,
+        set_id: globalSetIdCounter,
+      });
+    }
+
+    // Deduplicate question_types
+    for (const qt of dsData.question_types ?? []) {
+      if (!allQuestionTypes.find((existing) => existing.id === qt.id)) {
+        allQuestionTypes.push(qt);
+      }
+    }
+  }
+
+  // If no question types found, use defaults
+  const question_types =
+    allQuestionTypes.length > 0
+      ? allQuestionTypes
+      : EMPTY_CET4_DATA.question_types;
+
+  return {
+    metadata: {
+      exam_year: 0,
+      exam_month: 0,
+      total_sets: allSets.length,
+      annotation_version: "2.0",
+    },
+    question_types,
+    sets: allSets,
+  };
+}
+
 // ─── Provider ───────────────────────────────────────────────────────
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<CET4Data>(() => enrichCET4Data(cet4Data));
-  const [currentDatasetId, setCurrentDatasetId] = useState<string | null>(null);
+  const [datasetDataMap, setDatasetDataMap] = useState<Map<string, CET4Data>>(
+    () => new Map()
+  );
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isDefaultData = currentDatasetId === null;
+  // Ref to access current datasets in callbacks without dependency
+  const datasetsRef = useRef(datasets);
+  datasetsRef.current = datasets;
+
+  // Computed: all dataset IDs
+  const allDatasetIds = useMemo(
+    () => datasets.map((ds) => ds.id),
+    [datasets]
+  );
+
+  // Computed: whether all are selected
+  const isAllSelected = useMemo(
+    () => allDatasetIds.length > 0 && allDatasetIds.every((id) => selectedDatasetIds.has(id)),
+    [allDatasetIds, selectedDatasetIds]
+  );
+
+  // Computed: merged data from all selected datasets
+  const data = useMemo(() => {
+    const merged = mergeSelectedData(datasetDataMap, selectedDatasetIds);
+    return enrichCET4Data(merged);
+  }, [datasetDataMap, selectedDatasetIds]);
+
+  // ── Internal: load data for a single dataset (no state change for selection) ──
+
+  const loadDatasetData = useCallback(async (id: string): Promise<CET4Data | null> => {
+    try {
+      const res = await fetch(`/api/datasets?id=${id}&withData=true`);
+      if (!res.ok) {
+        console.error(`Failed to load dataset ${id}: HTTP ${res.status}`);
+        return null;
+      }
+      const json = await res.json();
+      if (!json.success) {
+        console.error(`Failed to load dataset ${id}: ${json.error}`);
+        return null;
+      }
+      const dataField = json.data?.data;
+      if (!dataField) {
+        console.error(`Dataset ${id} has no data`);
+        return null;
+      }
+      const rawParsed = JSON.parse(dataField);
+      const normalized = normalizeToCET4Data(rawParsed);
+      return normalized;
+    } catch (err) {
+      console.error(`Error loading dataset ${id}:`, err);
+      return null;
+    }
+  }, []);
 
   // ── Refresh dataset list ────────────────────────────────────────
 
@@ -80,14 +235,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const res = await fetch("/api/datasets");
       const json = await res.json();
       if (json.success) {
-        setDatasets(json.data);
+        const datasetList: DatasetItem[] = json.data;
+        setDatasets(datasetList);
+
+        // Load data for all datasets that we don't already have
+        // Use functional update to avoid stale closure
+        const currentMap = new Map<string, CET4Data>();
+        // Get current map snapshot
+        setDatasetDataMap((prev) => {
+          for (const [k, v] of prev) {
+            currentMap.set(k, v);
+          }
+          return prev; // no change yet
+        });
+
+        let changed = false;
+        for (const ds of datasetList) {
+          if (!currentMap.has(ds.id)) {
+            const data = await loadDatasetData(ds.id);
+            if (data) {
+              currentMap.set(ds.id, data);
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          setDatasetDataMap(new Map(currentMap));
+        }
       }
     } catch {
       console.error("Failed to fetch datasets");
     }
-  }, []);
+  }, [loadDatasetData]);
 
-  // Load datasets on mount (with error guard)
+  // Load datasets on mount
   const mountedRef = useRef(false);
   useEffect(() => {
     if (mountedRef.current) return;
@@ -95,33 +276,64 @@ export function DataProvider({ children }: { children: ReactNode }) {
     refreshDatasets().catch(() => {
       // Silently fail - datasets list is non-critical
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Load dataset by ID ──────────────────────────────────────────
+  // ── Toggle dataset selection ────────────────────────────────────
+
+  const toggleDataset = useCallback((id: string) => {
+    setSelectedDatasetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Select all ──────────────────────────────────────────────────
+
+  const selectAll = useCallback(() => {
+    setSelectedDatasetIds((prev) => {
+      const next = new Set(prev);
+      // Add all dataset IDs from the current datasets list (using ref to avoid dependency)
+      for (const ds of datasetsRef.current) {
+        next.add(ds.id);
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Deselect all ────────────────────────────────────────────────
+
+  const deselectAll = useCallback(() => {
+    setSelectedDatasetIds(new Set());
+  }, []);
+
+  // ── Load dataset by ID (load data + auto-select) ───────────────
 
   const loadDataset = useCallback(
     async (id: string) => {
       setIsLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/datasets?id=${id}&withData=true`);
-        if (!res.ok) {
-          throw new Error(`HTTP错误 ${res.status}`);
+        // Always load fresh data from API
+        const normalized = await loadDatasetData(id);
+        if (!normalized) {
+          throw new Error("数据集内容为空或加载失败");
         }
-        const json = await res.json();
-        if (!json.success) {
-          throw new Error(json.error || "加载失败");
-        }
-        const dataField = json.data?.data;
-        if (!dataField) {
-          throw new Error("数据集内容为空");
-        }
-        const rawParsed = JSON.parse(dataField);
-        // Normalize: ensure metadata, question_types, sets all exist
-        const normalized = normalizeToCET4Data(rawParsed);
-        const enriched = enrichCET4Data(normalized);
-        setData(enriched);
-        setCurrentDatasetId(id);
+        setDatasetDataMap((prev) => {
+          const next = new Map(prev);
+          next.set(id, normalized);
+          return next;
+        });
+        // Auto-select
+        setSelectedDatasetIds((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "加载数据集失败";
         setError(msg);
@@ -129,18 +341,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     },
-    []
+    [loadDatasetData]
   );
 
-  // ── Reset to default ────────────────────────────────────────────
-
-  const resetToDefault = useCallback(() => {
-    setData(enrichCET4Data(cet4Data));
-    setCurrentDatasetId(null);
-    setError(null);
-  }, []);
-
-  // ── Upload and auto-load ────────────────────────────────────────
+  // ── Upload and auto-select ──────────────────────────────────────
 
   const uploadAndLoad = useCallback(
     async (
@@ -173,7 +377,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // Refresh dataset list
         await refreshDatasets();
 
-        // Auto-load the uploaded dataset
+        // Auto-load and select the uploaded dataset
         const newId: string = json.data.id;
         await loadDataset(newId);
       } catch (err) {
@@ -203,10 +407,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           throw new Error(json.error || "删除失败");
         }
 
-        // If we deleted the current dataset, reset to default
-        if (currentDatasetId === id) {
-          resetToDefault();
-        }
+        // Remove from data map
+        setDatasetDataMap((prev) => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+
+        // Remove from selection
+        setSelectedDatasetIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
 
         await refreshDatasets();
       } catch (err) {
@@ -214,23 +427,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setError(msg);
       }
     },
-    [currentDatasetId, resetToDefault, refreshDatasets]
+    [refreshDatasets]
   );
+
+  // ── Refresh all data ────────────────────────────────────────────
+
+  const refreshAllData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const newMap = new Map<string, CET4Data>();
+      for (const ds of datasets) {
+        const data = await loadDatasetData(ds.id);
+        if (data) {
+          newMap.set(ds.id, data);
+        }
+      }
+      setDatasetDataMap(newMap);
+    } catch (err) {
+      console.error("Failed to refresh all data:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [datasets, loadDatasetData]);
 
   return (
     <DataContext.Provider
       value={{
         data,
-        isDefaultData,
-        currentDatasetId,
+        datasetDataMap,
+        selectedDatasetIds,
+        allDatasetIds,
+        isAllSelected,
         datasets,
         isLoading,
         error,
+        toggleDataset,
+        selectAll,
+        deselectAll,
         loadDataset,
-        resetToDefault,
         uploadAndLoad,
         deleteDataset,
         refreshDatasets,
+        refreshAllData,
       }}
     >
       {children}
