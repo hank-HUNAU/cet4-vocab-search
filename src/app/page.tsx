@@ -306,18 +306,18 @@ function StatisticsTab({ data }: { data: CET4Data }) {
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
         {summaryCards.map((card) => (
           <Card key={card.title} className="py-4">
             <CardContent className="flex items-center gap-3">
               <div
-                className={`p-2.5 rounded-lg ${card.bg} ${card.color}`}
+                className={`p-2 sm:p-2.5 rounded-lg ${card.bg} ${card.color}`}
               >
                 {card.icon}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">{card.title}</p>
-                <p className={`text-2xl font-bold ${card.color}`}>
+                <p className={`text-xl sm:text-2xl font-bold ${card.color}`}>
                   {card.value}
                 </p>
               </div>
@@ -335,18 +335,18 @@ function StatisticsTab({ data }: { data: CET4Data }) {
             <CardDescription>各语法知识点子类出现频次</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={grammarChartConfig} className="h-[300px] w-full">
+            <ChartContainer config={grammarChartConfig} className="h-[220px] sm:h-[300px] w-full">
               <BarChart
                 data={grammarDist.slice(0, 10)}
                 layout="vertical"
-                margin={{ left: 20, right: 20, top: 5, bottom: 5 }}
+                margin={{ left: 10, right: 10, top: 5, bottom: 5 }}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" allowDecimals={false} />
                 <YAxis
                   type="category"
                   dataKey="name"
-                  width={120}
+                  width={80}
                   tick={{ fontSize: 12 }}
                 />
                 <ChartTooltip content={<ChartTooltipContent />} />
@@ -367,18 +367,18 @@ function StatisticsTab({ data }: { data: CET4Data }) {
             <CardDescription>各语义知识点子类出现频次</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={semanticChartConfig} className="h-[300px] w-full">
+            <ChartContainer config={semanticChartConfig} className="h-[220px] sm:h-[300px] w-full">
               <BarChart
                 data={semanticDist.slice(0, 10)}
                 layout="vertical"
-                margin={{ left: 20, right: 20, top: 5, bottom: 5 }}
+                margin={{ left: 10, right: 10, top: 5, bottom: 5 }}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" allowDecimals={false} />
                 <YAxis
                   type="category"
                   dataKey="name"
-                  width={120}
+                  width={80}
                   tick={{ fontSize: 12 }}
                 />
                 <ChartTooltip content={<ChartTooltipContent />} />
@@ -401,15 +401,15 @@ function StatisticsTab({ data }: { data: CET4Data }) {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col md:flex-row items-center gap-6">
-            <ChartContainer config={posChartConfig} className="h-[280px] w-full max-w-[400px]">
+            <ChartContainer config={posChartConfig} className="h-[220px] sm:h-[280px] w-full max-w-[400px]">
               <PieChart>
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Pie
                   data={posDist}
                   cx="50%"
                   cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
+                  innerRadius={40}
+                  outerRadius={70}
                   paddingAngle={3}
                   dataKey="value"
                   nameKey="name"
@@ -451,6 +451,7 @@ function StatisticsTab({ data }: { data: CET4Data }) {
           <CardDescription>{(data.sets ?? []).length}套题目的基本信息</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -511,6 +512,7 @@ function StatisticsTab({ data }: { data: CET4Data }) {
               })}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -555,13 +557,13 @@ function KnowledgePointSearchTab({ data }: { data: CET4Data }) {
     <div className="space-y-4">
       {/* Filters */}
       <Card>
-        <CardContent className="flex flex-wrap gap-4 items-center pt-6">
+        <CardContent className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-4 items-start sm:items-center pt-6">
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium">分类筛选</span>
           </div>
           <Select value={categoryFilter} onValueChange={handleCategoryChange}>
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-full sm:w-[140px]">
               <SelectValue placeholder="选择分类" />
             </SelectTrigger>
             <SelectContent>
@@ -571,7 +573,7 @@ function KnowledgePointSearchTab({ data }: { data: CET4Data }) {
             </SelectContent>
           </Select>
           <Select value={subCategoryFilter} onValueChange={setSubCategoryFilter}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="选择子类" />
             </SelectTrigger>
             <SelectContent>
@@ -590,7 +592,7 @@ function KnowledgePointSearchTab({ data }: { data: CET4Data }) {
       </Card>
 
       {/* Results */}
-      <ScrollArea className="h-[calc(100vh-320px)]">
+      <ScrollArea className="h-[calc(100vh-280px)] sm:h-[calc(100vh-320px)]">
         <div className="space-y-3 pr-4">
           {filtered.length === 0 ? (
             <Card>
@@ -703,13 +705,13 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
     <div className="space-y-4">
       {/* Filters */}
       <Card>
-        <CardContent className="flex flex-wrap gap-4 items-center pt-6">
+        <CardContent className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-4 items-start sm:items-center pt-6">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium">套题筛选</span>
           </div>
           <Select value={setFilter} onValueChange={setSetFilter}>
-            <SelectTrigger className="w-[120px]">
+            <SelectTrigger className="w-full sm:w-[120px]">
               <SelectValue placeholder="选择套题" />
             </SelectTrigger>
             <SelectContent>
@@ -728,7 +730,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
               placeholder="起始"
               value={blankRangeStart}
               onChange={(e) => setBlankRangeStart(e.target.value)}
-              className="w-[80px] h-8 text-sm"
+              className="w-[70px] sm:w-[80px] h-8 text-sm"
             />
             <span className="text-muted-foreground">—</span>
             <Input
@@ -736,7 +738,7 @@ function QuestionSearchTab({ data }: { data: CET4Data }) {
               placeholder="结束"
               value={blankRangeEnd}
               onChange={(e) => setBlankRangeEnd(e.target.value)}
-              className="w-[80px] h-8 text-sm"
+              className="w-[70px] sm:w-[80px] h-8 text-sm"
             />
           </div>
         </CardContent>
@@ -943,7 +945,7 @@ function FullTextSearchTab({ data }: { data: CET4Data }) {
 
       {!query.trim() ? (
         <Card>
-          <CardContent className="py-16 text-center text-muted-foreground">
+          <CardContent className="py-10 sm:py-16 text-center text-muted-foreground">
             <Search className="h-12 w-12 mx-auto mb-4 opacity-30" />
             <p className="text-lg font-medium">全文搜索</p>
             <p className="text-sm mt-1">
@@ -1069,7 +1071,7 @@ function WordAssociationTab({ data }: { data: CET4Data }) {
                 className="pl-9 h-10"
               />
             </div>
-            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+            <div className="flex flex-wrap gap-1.5 max-h-24 sm:max-h-32 overflow-y-auto">
               {filteredWords.map((w) => (
                 <Badge
                   key={`${w.word}-${w.setId}`}
@@ -1094,7 +1096,7 @@ function WordAssociationTab({ data }: { data: CET4Data }) {
 
       {!selectedWord ? (
         <Card>
-          <CardContent className="py-16 text-center text-muted-foreground">
+          <CardContent className="py-10 sm:py-16 text-center text-muted-foreground">
             <Link2 className="h-12 w-12 mx-auto mb-4 opacity-30" />
             <p className="text-lg font-medium">单词关联</p>
             <p className="text-sm mt-1">
@@ -2036,7 +2038,7 @@ function DataSourceSelector() {
 
   return (
     <Card className="mb-4 border-teal-200 dark:border-teal-800">
-      <CardContent className="pt-4 pb-3">
+      <CardContent className="pt-4 sm:pt-6 pb-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
           {/* Left: data source info */}
           <div className="flex items-center gap-3 flex-wrap">
@@ -2175,17 +2177,17 @@ export default function HomePage() {
   const hasData = data.sets && data.sets.length > 0;
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background overflow-x-hidden">
       {/* Header */}
       <header className="border-b bg-gradient-to-r from-teal-50 via-emerald-50 to-amber-50 dark:from-teal-950/30 dark:via-emerald-950/30 dark:to-amber-950/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-teal-600 text-white">
-                <GraduationCap className="h-6 w-6" />
+                <GraduationCap className="h-5 w-5 sm:h-6 sm:w-6" />
               </div>
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-foreground">
+                <h1 className="text-lg sm:text-2xl font-bold text-foreground">
                   CET4 词汇匹配标注检索系统
                 </h1>
                 <p className="text-sm text-muted-foreground">
@@ -2195,7 +2197,7 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Select value={questionType} onValueChange={setQuestionType}>
-                <SelectTrigger className="w-[180px] h-8 text-xs">
+                <SelectTrigger className="w-full sm:w-[180px] h-8 text-xs">
                   <Database className="h-3.5 w-3.5 mr-1 text-teal-600" />
                   <SelectValue />
                 </SelectTrigger>
@@ -2219,54 +2221,54 @@ export default function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-6 w-full">
         {/* Data Source Selector */}
         <DataSourceSelector />
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="mb-6">
-            <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-muted/50 p-1.5 rounded-xl">
+            <TabsList className="w-full flex flex-nowrap overflow-x-auto h-auto gap-1 bg-muted/50 p-1.5 rounded-xl">
               <TabsTrigger
                 value="statistics"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <BarChart3 className="h-4 w-4 mr-1.5" />
-                统计概览
+                <BarChart3 className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">统计概览</span>
               </TabsTrigger>
               <TabsTrigger
                 value="knowledge"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <Search className="h-4 w-4 mr-1.5" />
-                知识点检索
+                <Search className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">知识点检索</span>
               </TabsTrigger>
               <TabsTrigger
                 value="question"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <FileText className="h-4 w-4 mr-1.5" />
-                题目检索
+                <FileText className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">题目检索</span>
               </TabsTrigger>
               <TabsTrigger
                 value="fulltext"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <BookOpen className="h-4 w-4 mr-1.5" />
-                全文搜索
+                <BookOpen className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">全文搜索</span>
               </TabsTrigger>
               <TabsTrigger
                 value="word"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <Link2 className="h-4 w-4 mr-1.5" />
-                单词关联
+                <Link2 className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">单词关联</span>
               </TabsTrigger>
               <TabsTrigger
                 value="upload"
-                className="flex-1 min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
               >
-                <Upload className="h-4 w-4 mr-1.5" />
-                数据上传
+                <Upload className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">数据上传</span>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -2297,7 +2299,7 @@ export default function HomePage() {
 
           {/* No-data prompt - always visible in analysis tabs when no data */}
           {!hasData && activeTab !== "upload" && (
-            <Card className="py-16">
+            <Card className="py-10 sm:py-16">
               <CardContent className="text-center space-y-4">
                 <Database className="h-16 w-16 mx-auto text-teal-300" />
                 <h2 className="text-xl font-semibold text-foreground">{selectedQt?.label}</h2>
@@ -2330,7 +2332,7 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="border-t mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-muted-foreground">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 text-center text-sm text-muted-foreground">
           {selectedDatasetIds.size > 0 ? (
             <>数据来源：已选数据集 · 标注版本：v{data.metadata.annotation_version || "2.0"} · 套题数：{(data.sets ?? []).length}</>
           ) : (
