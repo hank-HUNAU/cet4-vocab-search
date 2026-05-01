@@ -89,8 +89,11 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
+  Rocket,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 // ─── Chart Configs ───────────────────────────────────────────────
 
@@ -1252,6 +1255,7 @@ function DataUploadTab() {
   } = useDataContext();
 
   const [uploading, setUploading] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     current: number;
     total: number;
@@ -1492,6 +1496,24 @@ function DataUploadTab() {
     }
   }, [pendingFiles, uploadAndLoad]);
 
+  // ── Publish to GitHub Pages ───────────────────────────────────────
+  const handlePublish = useCallback(async () => {
+    setPublishing(true);
+    try {
+      const res = await fetch("/api/publish", { method: "POST" });
+      const json = await res.json();
+      if (json.success) {
+        toast.success("发布成功", { description: json.message });
+      } else {
+        toast.error("发布失败", { description: json.error || "发布失败" });
+      }
+    } catch {
+      toast.error("发布请求失败");
+    } finally {
+      setPublishing(false);
+    }
+  }, []);
+
   // ── Delete an uploaded dataset ────────────────────────────────────
   const handleDelete = useCallback(
     async (id: string, name: string) => {
@@ -1549,6 +1571,33 @@ function DataUploadTab() {
 
   return (
     <div className="space-y-6">
+      {/* Publish to GitHub Pages */}
+      <Card className="border-purple-200 bg-gradient-to-r from-purple-50 to-pink-50 dark:border-purple-800 dark:from-purple-950/30 dark:to-pink-950/30">
+        <CardContent className="pt-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-gradient-to-br from-purple-600 to-pink-600 text-white">
+                <Rocket className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground">发布到 GitHub Pages</h3>
+                <p className="text-sm text-muted-foreground">
+                  将所有数据集合并并发布到公开站点，触发 GitHub Actions 自动部署
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={handlePublish}
+              disabled={publishing || datasets.length === 0}
+              className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shrink-0"
+            >
+              {publishing ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Rocket className="h-4 w-4 mr-2" />}
+              {publishing ? "正在发布..." : "发布到 GitHub Pages"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Upload Area */}
       <Card>
         <CardHeader>
@@ -2169,7 +2218,7 @@ function DataSourceSelector() {
 
 export default function HomePage() {
   const { data, selectedDatasetIds, datasets } = useDataContext();
-  const [activeTab, setActiveTab] = useState("statistics");
+  const [activeTab, setActiveTab] = useState("upload");
   const [questionType, setQuestionType] = useState("banked_cloze");
 
   const selectedQt = data.question_types?.find((qt) => qt.id === questionType);
@@ -2179,39 +2228,39 @@ export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col bg-background overflow-x-hidden">
       {/* Header */}
-      <header className="border-b bg-gradient-to-r from-teal-50 via-emerald-50 to-amber-50 dark:from-teal-950/30 dark:via-emerald-950/30 dark:to-amber-950/30">
+      <header className="border-b bg-gradient-to-r from-purple-50 via-pink-50 to-amber-50 dark:from-purple-950/30 dark:via-pink-950/30 dark:to-amber-950/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-teal-600 text-white">
-                <GraduationCap className="h-5 w-5 sm:h-6 sm:w-6" />
+              <div className="p-2 rounded-lg bg-gradient-to-br from-purple-600 to-pink-600 text-white">
+                <Database className="h-5 w-5 sm:h-6 sm:w-6" />
               </div>
               <div>
                 <h1 className="text-lg sm:text-2xl font-bold text-foreground">
-                  CET4 词汇匹配标注检索系统
+                  CET4 管理后台
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Part III Section A 选词填空标注数据检索与分析
+                  管理数据集 · 发布到 GitHub Pages
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Select value={questionType} onValueChange={setQuestionType}>
-                <SelectTrigger className="w-full sm:w-[180px] h-8 text-xs">
-                  <Database className="h-3.5 w-3.5 mr-1 text-teal-600" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(data.question_types ?? []).map((qt) => (
-                    <SelectItem key={qt.id} value={qt.id}>
-                      {qt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <a
+                href="https://hank-hunau.github.io/cet4-vocab-search/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button
+                  variant="outline"
+                  className="gap-1.5 border-purple-300 text-purple-700 hover:bg-purple-50 dark:border-purple-600 dark:text-purple-300 dark:hover:bg-purple-950/50"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  查看公开站点
+                </Button>
+              </a>
               <Badge
                 variant="outline"
-                className="text-xs border-teal-400 text-teal-600 dark:border-teal-600 dark:text-teal-400"
+                className="text-xs border-purple-400 text-purple-600 dark:border-purple-600 dark:text-purple-400"
               >
                 {selectedDatasetIds.size > 0 ? `${selectedDatasetIds.size}个数据集` : "未选择"}
               </Badge>
@@ -2229,50 +2278,56 @@ export default function HomePage() {
           <div className="mb-6">
             <TabsList className="w-full flex flex-nowrap overflow-x-auto h-auto gap-1 bg-muted/50 p-1.5 rounded-xl">
               <TabsTrigger
+                value="upload"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
+              >
+                <Database className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">数据管理</span>
+              </TabsTrigger>
+              <TabsTrigger
                 value="statistics"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
               >
                 <BarChart3 className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline ml-1.5">统计概览</span>
+                <span className="hidden sm:inline ml-1.5">数据统计</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="fulltext"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
+              >
+                <BookOpen className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">全文检索</span>
               </TabsTrigger>
               <TabsTrigger
                 value="knowledge"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
               >
                 <Search className="h-4 w-4 sm:mr-1.5" />
                 <span className="hidden sm:inline ml-1.5">知识点检索</span>
               </TabsTrigger>
               <TabsTrigger
-                value="question"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
-              >
-                <FileText className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline ml-1.5">题目检索</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="fulltext"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
-              >
-                <BookOpen className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline ml-1.5">全文搜索</span>
-              </TabsTrigger>
-              <TabsTrigger
                 value="word"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
               >
                 <Link2 className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline ml-1.5">单词关联</span>
+                <span className="hidden sm:inline ml-1.5">单词检索</span>
               </TabsTrigger>
               <TabsTrigger
-                value="upload"
-                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-teal-600 data-[state=active]:text-white"
+                value="question"
+                className="flex-1 min-w-0 sm:min-w-[120px] data-[state=active]:bg-purple-600 data-[state=active]:text-white"
               >
-                <Upload className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline ml-1.5">数据上传</span>
+                <FileText className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline ml-1.5">套题浏览</span>
               </TabsTrigger>
             </TabsList>
           </div>
 
+          {/* Tab 1: 数据管理 */}
+          <TabsContent value="upload">
+            <DataUploadTab />
+          </TabsContent>
+
+          {/* Tab 2-6: Analysis tabs (only show data when available) */}
           {!hasData ? (
             <TabsContent value="statistics" forceMount className="hidden">
               <StatisticsTab data={data} />
@@ -2282,17 +2337,17 @@ export default function HomePage() {
               <TabsContent value="statistics">
                 <StatisticsTab data={data} />
               </TabsContent>
-              <TabsContent value="knowledge">
-                <KnowledgePointSearchTab data={data} />
-              </TabsContent>
-              <TabsContent value="question">
-                <QuestionSearchTab data={data} />
-              </TabsContent>
               <TabsContent value="fulltext">
                 <FullTextSearchTab data={data} />
               </TabsContent>
+              <TabsContent value="knowledge">
+                <KnowledgePointSearchTab data={data} />
+              </TabsContent>
               <TabsContent value="word">
                 <WordAssociationTab data={data} />
+              </TabsContent>
+              <TabsContent value="question">
+                <QuestionSearchTab data={data} />
               </TabsContent>
             </>
           )}
@@ -2301,12 +2356,12 @@ export default function HomePage() {
           {!hasData && activeTab !== "upload" && (
             <Card className="py-10 sm:py-16">
               <CardContent className="text-center space-y-4">
-                <Database className="h-16 w-16 mx-auto text-teal-300" />
+                <Database className="h-16 w-16 mx-auto text-purple-300" />
                 <h2 className="text-xl font-semibold text-foreground">{selectedQt?.label}</h2>
                 <p className="text-muted-foreground max-w-md mx-auto">
                   {selectedQt?.description}
                 </p>
-                <p className="text-sm text-teal-600 bg-teal-50 dark:bg-teal-950/50 rounded-lg px-4 py-2 inline-block">
+                <p className="text-sm text-purple-600 bg-purple-50 dark:bg-purple-950/50 rounded-lg px-4 py-2 inline-block">
                   {datasets.length === 0
                     ? "请先上传数据集以开始分析"
                     : "请在上方勾选数据集以查看数据"}
@@ -2314,19 +2369,15 @@ export default function HomePage() {
                 <div>
                   <button
                     onClick={() => setActiveTab("upload")}
-                    className="mt-2 px-6 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-medium text-sm flex items-center gap-2 mx-auto transition-colors"
+                    className="mt-2 px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium text-sm flex items-center gap-2 mx-auto transition-colors"
                   >
                     <Upload className="h-4 w-4" />
-                    前往上传数据
+                    前往数据管理
                   </button>
                 </div>
               </CardContent>
             </Card>
           )}
-
-          <TabsContent value="upload">
-            <DataUploadTab />
-          </TabsContent>
         </Tabs>
       </main>
 
