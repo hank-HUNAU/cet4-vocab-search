@@ -1,0 +1,15 @@
+[
+  {
+    "id": "cet4-2015-06",
+    "name": "CET4 2015年6月",
+    "fileName": "cet4-2015-06.json",
+    "fileType": "json",
+    "fileSize": 31918,
+    "examYear": 2015,
+    "examMonth": 6,
+    "totalSets": 3,
+    "description": "CET4 2015年6月词汇匹配标注数据",
+    "tags": "CET4,2015,6月",
+    "createdAt": "2026-05-01T07:18:05.882Z"
+  }
+]

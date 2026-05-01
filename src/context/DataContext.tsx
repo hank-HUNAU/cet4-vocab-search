@@ -12,30 +12,32 @@ import {
 } from "react";
 import { type CET4Data } from "@/data/cet4-data";
 import { enrichCET4Data, normalizeToCET4Data } from "@/lib/cet4-utils";
+import {
+  type DatasetMeta,
+  type DatasetRecord,
+  fetchIndex as githubFetchIndex,
+  fetchDataset as githubFetchDataset,
+  uploadDataset as githubUploadDataset,
+  deleteDataset as githubDeleteDataset,
+  generateDatasetId,
+  getToken,
+  setToken as githubSetToken,
+  removeToken as githubRemoveToken,
+  validateToken,
+} from "@/lib/github-api";
 
-// ─── Detect static deployment (GitHub Pages) ──────────────────────
-// When running on GitHub Pages, API routes are unavailable.
-// We detect this by checking if the basePath prefix is present.
+// ─── Detect basePath for static export ──────────────────────────
 
-const IS_STATIC_EXPORT = typeof window !== "undefined" && process.env.NODE_ENV === "production" && !window.location.hostname.includes("space-z.ai") && !window.location.hostname.includes("localhost");
+const BASE_PATH =
+  typeof window !== "undefined" && window.location.pathname.startsWith("/cet4-vocab-search")
+    ? "/cet4-vocab-search"
+    : "";
 
-// ─── Dataset type (matches the API response) ────────────────────────
+// ─── Re-export DatasetMeta as DatasetItem for backward compat ───
 
-export interface DatasetItem {
-  id: string;
-  name: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
-  examYear: number | null;
-  examMonth: number | null;
-  totalSets: number | null;
-  description: string | null;
-  tags: string | null;
-  createdAt: string;
-}
+export type DatasetItem = DatasetMeta;
 
-// ─── Default empty CET4Data ─────────────────────────────────────────
+// ─── Default empty CET4Data ─────────────────────────────────────
 
 const EMPTY_CET4_DATA: CET4Data = {
   metadata: {
@@ -74,7 +76,7 @@ const EMPTY_CET4_DATA: CET4Data = {
   sets: [],
 };
 
-// ─── Context shape ──────────────────────────────────────────────────
+// ─── Context shape ──────────────────────────────────────────────
 
 interface DataContextShape {
   /** The merged CET4Data from all selected datasets (enriched) */
@@ -87,40 +89,42 @@ interface DataContextShape {
   allDatasetIds: string[];
   /** Whether all datasets are selected */
   isAllSelected: boolean;
-  /** Whether running in static export mode (GitHub Pages) */
-  isStaticMode: boolean;
-  /** List of uploaded datasets (without full data payload) */
+  /** List of dataset metadata */
   datasets: DatasetItem[];
   /** Loading state for data operations */
   isLoading: boolean;
   /** Error message if any */
   error: string | null;
+  /** Whether GitHub PAT is configured */
+  hasGitHubToken: boolean;
   /** Toggle a dataset's selection */
   toggleDataset: (id: string) => void;
   /** Select all datasets */
   selectAll: () => void;
   /** Deselect all datasets */
   deselectAll: () => void;
-  /** Load a dataset's data from the API by ID (adds to map & auto-selects) */
-  loadDataset: (id: string) => Promise<void>;
-  /** Upload a file and auto-select it */
+  /** Upload a file and auto-select it (via GitHub API) */
   uploadAndLoad: (
     file: File,
     name?: string,
     description?: string,
     tags?: string
   ) => Promise<void>;
-  /** Delete a dataset */
+  /** Delete a dataset (via GitHub API) */
   deleteDataset: (id: string) => Promise<void>;
-  /** Refresh the dataset list and load all data */
+  /** Refresh the dataset list from static index */
   refreshDatasets: () => Promise<void>;
+  /** Set GitHub PAT */
+  setGitHubToken: (token: string) => Promise<boolean>;
+  /** Remove GitHub PAT */
+  clearGitHubToken: () => void;
   /** Reload all datasets' data */
   refreshAllData: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextShape | null>(null);
 
-// ─── Merge selected datasets into a single CET4Data ────────────────
+// ─── Merge selected datasets into a single CET4Data ─────────────
 
 function mergeSelectedData(
   datasetDataMap: Map<string, CET4Data>,
@@ -140,14 +144,12 @@ function mergeSelectedData(
 
     for (const set of dsData.sets ?? []) {
       globalSetIdCounter++;
-      // Prefix set_id with dataset info to make unique across datasets
       allSets.push({
         ...set,
         set_id: globalSetIdCounter,
       });
     }
 
-    // Deduplicate question_types
     for (const qt of dsData.question_types ?? []) {
       if (!allQuestionTypes.find((existing) => existing.id === qt.id)) {
         allQuestionTypes.push(qt);
@@ -155,7 +157,6 @@ function mergeSelectedData(
     }
   }
 
-  // If no question types found, use defaults
   const question_types =
     allQuestionTypes.length > 0
       ? allQuestionTypes
@@ -173,7 +174,7 @@ function mergeSelectedData(
   };
 }
 
-// ─── Provider ───────────────────────────────────────────────────────
+// ─── Provider ───────────────────────────────────────────────────
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [datasetDataMap, setDatasetDataMap] = useState<Map<string, CET4Data>>(
@@ -185,153 +186,140 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasGitHubToken, setHasGitHubToken] = useState(false);
 
-  // Ref to access current datasets in callbacks without dependency
   const datasetsRef = useRef(datasets);
   datasetsRef.current = datasets;
 
-  // Computed: all dataset IDs
+  // Check for token on mount
+  useEffect(() => {
+    setHasGitHubToken(!!getToken());
+  }, []);
+
   const allDatasetIds = useMemo(
     () => datasets.map((ds) => ds.id),
     [datasets]
   );
 
-  // Computed: whether all are selected
   const isAllSelected = useMemo(
-    () => allDatasetIds.length > 0 && allDatasetIds.every((id) => selectedDatasetIds.has(id)),
+    () =>
+      allDatasetIds.length > 0 &&
+      allDatasetIds.every((id) => selectedDatasetIds.has(id)),
     [allDatasetIds, selectedDatasetIds]
   );
 
-  // Computed: merged data from all selected datasets
   const data = useMemo(() => {
     const merged = mergeSelectedData(datasetDataMap, selectedDatasetIds);
     return enrichCET4Data(merged);
   }, [datasetDataMap, selectedDatasetIds]);
 
-  // ── Internal: load data for a single dataset (no state change for selection) ──
+  // ── Load a dataset's data from static JSON file ──────────────
 
-  const loadDatasetData = useCallback(async (id: string): Promise<CET4Data | null> => {
-    try {
-      const res = await fetch(`/api/datasets?id=${id}&withData=true`);
-      if (!res.ok) {
-        console.error(`Failed to load dataset ${id}: HTTP ${res.status}`);
+  const loadDatasetData = useCallback(
+    async (id: string): Promise<CET4Data | null> => {
+      try {
+        const res = await fetch(`${BASE_PATH}/data/datasets/${id}.json`);
+        if (!res.ok) {
+          console.error(`Failed to load dataset ${id}: HTTP ${res.status}`);
+          return null;
+        }
+        const record: DatasetRecord = await res.json();
+        if (!record.data) {
+          console.error(`Dataset ${id} has no data field`);
+          return null;
+        }
+        const normalized = normalizeToCET4Data(record.data);
+        return normalized;
+      } catch (err) {
+        console.error(`Error loading dataset ${id}:`, err);
         return null;
       }
-      const json = await res.json();
-      if (!json.success) {
-        console.error(`Failed to load dataset ${id}: ${json.error}`);
-        return null;
-      }
-      const dataField = json.data?.data;
-      if (!dataField) {
-        console.error(`Dataset ${id} has no data`);
-        return null;
-      }
-      const rawParsed = JSON.parse(dataField);
-      const normalized = normalizeToCET4Data(rawParsed);
-      return normalized;
-    } catch (err) {
-      console.error(`Error loading dataset ${id}:`, err);
-      return null;
-    }
-  }, []);
+    },
+    []
+  );
 
-  // ── Load static fallback data (for GitHub Pages) ─────────────────
-
-  const loadStaticFallbackData = useCallback(async (): Promise<boolean> => {
-    try {
-      // Determine basePath for static export
-      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
-      const res = await fetch(`${basePath}/data/sample.json`);
-      if (!res.ok) return false;
-      const rawParsed = await res.json();
-      const normalized = normalizeToCET4Data(rawParsed);
-      if (!normalized || !normalized.sets || normalized.sets.length === 0) return false;
-
-      const staticId = "__static_sample__";
-      setDatasetDataMap(new Map([[staticId, normalized]]));
-      setSelectedDatasetIds(new Set([staticId]));
-      setDatasets([
-        {
-          id: staticId,
-          name: normalized.metadata?.exam_year ? `CET4 ${normalized.metadata.exam_year}年${normalized.metadata.exam_month}月` : "CET4 示例数据",
-          fileName: "sample.json",
-          fileType: "json",
-          fileSize: 0,
-          examYear: normalized.metadata?.exam_year || null,
-          examMonth: normalized.metadata?.exam_month || null,
-          totalSets: normalized.sets.length,
-          description: "静态示例数据（GitHub Pages 模式）",
-          tags: "示例",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      return true;
-    } catch (err) {
-      console.error("Failed to load static fallback data:", err);
-      return false;
-    }
-  }, []);
-
-  // ── Refresh dataset list ────────────────────────────────────────
+  // ── Refresh dataset list from static index ───────────────────
 
   const refreshDatasets = useCallback(async () => {
-    // Static export mode: load from static JSON file
-    if (IS_STATIC_EXPORT) {
-      await loadStaticFallbackData();
-      return;
-    }
-
     try {
-      const res = await fetch("/api/datasets");
-      const json = await res.json();
-      if (json.success) {
-        const datasetList: DatasetItem[] = json.data;
-        setDatasets(datasetList);
-
-        // Load data for all datasets that we don't already have
-        // Use functional update to avoid stale closure
-        const currentMap = new Map<string, CET4Data>();
-        // Get current map snapshot
-        setDatasetDataMap((prev) => {
-          for (const [k, v] of prev) {
-            currentMap.set(k, v);
-          }
-          return prev; // no change yet
-        });
-
-        let changed = false;
-        for (const ds of datasetList) {
-          if (!currentMap.has(ds.id)) {
-            const data = await loadDatasetData(ds.id);
-            if (data) {
-              currentMap.set(ds.id, data);
-              changed = true;
-            }
-          }
+      // Load index.json from static files
+      const res = await fetch(`${BASE_PATH}/data/index.json`);
+      if (!res.ok) {
+        console.warn("Failed to load index.json, trying fallback");
+        // Fallback: load sample.json as a single dataset
+        const sampleRes = await fetch(`${BASE_PATH}/data/sample.json`);
+        if (sampleRes.ok) {
+          const sampleData = await sampleRes.json();
+          const normalized = normalizeToCET4Data(sampleData);
+          const fallbackId = "__sample__";
+          setDatasetDataMap(new Map([[fallbackId, normalized]]));
+          setSelectedDatasetIds(new Set([fallbackId]));
+          setDatasets([
+            {
+              id: fallbackId,
+              name: normalized.metadata?.exam_year
+                ? `CET4 ${normalized.metadata.exam_year}年${normalized.metadata.exam_month}月`
+                : "CET4 示例数据",
+              fileName: "sample.json",
+              fileType: "json",
+              fileSize: 0,
+              examYear: normalized.metadata?.exam_year || null,
+              examMonth: normalized.metadata?.exam_month || null,
+              totalSets: normalized.sets.length,
+              description: "示例数据",
+              tags: "示例",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
         }
-        if (changed) {
-          setDatasetDataMap(new Map(currentMap));
+        return;
+      }
+
+      const index: DatasetMeta[] = await res.json();
+      setDatasets(index);
+
+      // Load data for datasets not yet in the map
+      const currentMap = new Map<string, CET4Data>();
+      setDatasetDataMap((prev) => {
+        for (const [k, v] of prev) {
+          currentMap.set(k, v);
+        }
+        return prev;
+      });
+
+      let changed = false;
+      for (const ds of index) {
+        if (!currentMap.has(ds.id)) {
+          const data = await loadDatasetData(ds.id);
+          if (data) {
+            currentMap.set(ds.id, data);
+            changed = true;
+          }
         }
       }
-    } catch {
-      // API failed — try static fallback
-      console.warn("API unavailable, trying static fallback data...");
-      await loadStaticFallbackData();
+      if (changed) {
+        setDatasetDataMap(new Map(currentMap));
+      }
+
+      // Auto-select all if nothing selected
+      if (selectedDatasetIds.size === 0 && index.length > 0) {
+        setSelectedDatasetIds(new Set(index.map((d) => d.id)));
+      }
+    } catch (err) {
+      console.error("Failed to refresh datasets:", err);
+      setError("加载数据集失败");
     }
-  }, [loadDatasetData, loadStaticFallbackData]);
+  }, [loadDatasetData, selectedDatasetIds.size]);
 
   // Load datasets on mount
   const mountedRef = useRef(false);
   useEffect(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
-    refreshDatasets().catch(() => {
-      // Silently fail - datasets list is non-critical
-    });
-  }, []);
+    refreshDatasets().catch(() => {});
+  }, [refreshDatasets]);
 
-  // ── Toggle dataset selection ────────────────────────────────────
+  // ── Toggle dataset selection ──────────────────────────────────
 
   const toggleDataset = useCallback((id: string) => {
     setSelectedDatasetIds((prev) => {
@@ -345,12 +333,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // ── Select all ──────────────────────────────────────────────────
+  // ── Select all ────────────────────────────────────────────────
 
   const selectAll = useCallback(() => {
     setSelectedDatasetIds((prev) => {
       const next = new Set(prev);
-      // Add all dataset IDs from the current datasets list (using ref to avoid dependency)
       for (const ds of datasetsRef.current) {
         next.add(ds.id);
       }
@@ -358,46 +345,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // ── Deselect all ────────────────────────────────────────────────
+  // ── Deselect all ──────────────────────────────────────────────
 
   const deselectAll = useCallback(() => {
     setSelectedDatasetIds(new Set());
   }, []);
 
-  // ── Load dataset by ID (load data + auto-select) ───────────────
-
-  const loadDataset = useCallback(
-    async (id: string) => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Always load fresh data from API
-        const normalized = await loadDatasetData(id);
-        if (!normalized) {
-          throw new Error("数据集内容为空或加载失败");
-        }
-        setDatasetDataMap((prev) => {
-          const next = new Map(prev);
-          next.set(id, normalized);
-          return next;
-        });
-        // Auto-select
-        setSelectedDatasetIds((prev) => {
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "加载数据集失败";
-        setError(msg);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [loadDatasetData]
-  );
-
-  // ── Upload and auto-select ──────────────────────────────────────
+  // ── Upload and auto-select (via GitHub API) ───────────────────
 
   const uploadAndLoad = useCallback(
     async (
@@ -409,81 +363,138 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
       setError(null);
       try {
-        const formData = new FormData();
-        formData.append("file", file);
-        if (name) formData.append("name", name);
-        if (description) formData.append("description", description);
-        if (tags) formData.append("tags", tags);
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const normalized = normalizeToCET4Data(parsed);
 
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
+        const datasetId = generateDatasetId(
+          file.name,
+          normalized.metadata?.exam_year,
+          normalized.metadata?.exam_month
+        );
+
+        const datasetName =
+          name ||
+          (normalized.metadata?.exam_year && normalized.metadata?.exam_month
+            ? `CET4 ${normalized.metadata.exam_year}年${normalized.metadata.exam_month}月`
+            : file.name.replace(/\.json$/i, ""));
+
+        const record: DatasetRecord = {
+          id: datasetId,
+          name: datasetName,
+          fileName: `${datasetId}.json`,
+          fileType: "json",
+          fileSize: file.size,
+          examYear: normalized.metadata?.exam_year || null,
+          examMonth: normalized.metadata?.exam_month || null,
+          totalSets: normalized.sets?.length || 0,
+          description: description || null,
+          tags: tags || null,
+          createdAt: new Date().toISOString(),
+          data: parsed, // store original parsed data
+        };
+
+        // Upload via GitHub API
+        await githubUploadDataset(record);
+
+        // Add to local state immediately (optimistic update)
+        setDatasetDataMap((prev) => {
+          const next = new Map(prev);
+          next.set(datasetId, normalized);
+          return next;
         });
-        if (!res.ok) {
-          throw new Error(`HTTP错误 ${res.status}`);
-        }
-        const json = await res.json();
-        if (!json.success) {
-          throw new Error(json.error || "上传失败");
-        }
+        setSelectedDatasetIds((prev) => {
+          const next = new Set(prev);
+          next.add(datasetId);
+          return next;
+        });
 
-        // Refresh dataset list
-        await refreshDatasets();
-
-        // Auto-load and select the uploaded dataset
-        const newId: string = json.data.id;
-        await loadDataset(newId);
+        // Refresh index from GitHub (to get latest)
+        try {
+          const index = await githubFetchIndex();
+          setDatasets(index);
+        } catch {
+          // Fallback: add to local list
+          setDatasets((prev) => {
+            if (prev.find((d) => d.id === datasetId)) return prev;
+            return [
+              ...prev,
+              {
+                id: record.id,
+                name: record.name,
+                fileName: record.fileName,
+                fileType: record.fileType,
+                fileSize: record.fileSize,
+                examYear: record.examYear,
+                examMonth: record.examMonth,
+                totalSets: record.totalSets,
+                description: record.description,
+                tags: record.tags,
+                createdAt: record.createdAt,
+              },
+            ];
+          });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "上传失败";
         setError(msg);
-        throw err; // re-throw so caller can handle
+        throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [refreshDatasets, loadDataset]
+    []
   );
 
-  // ── Delete dataset ──────────────────────────────────────────────
+  // ── Delete dataset (via GitHub API) ───────────────────────────
 
-  const deleteDataset = useCallback(
-    async (id: string) => {
+  const deleteDataset = useCallback(async (id: string) => {
+    try {
+      await githubDeleteDataset(id);
+
+      // Remove from local state
+      setDatasetDataMap((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+      setSelectedDatasetIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+
+      // Refresh index from GitHub
       try {
-        const res = await fetch(`/api/datasets?id=${id}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) {
-          throw new Error(`HTTP错误 ${res.status}`);
-        }
-        const json = await res.json();
-        if (!json.success) {
-          throw new Error(json.error || "删除失败");
-        }
-
-        // Remove from data map
-        setDatasetDataMap((prev) => {
-          const next = new Map(prev);
-          next.delete(id);
-          return next;
-        });
-
-        // Remove from selection
-        setSelectedDatasetIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-
-        await refreshDatasets();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "删除失败";
-        setError(msg);
+        const index = await githubFetchIndex();
+        setDatasets(index);
+      } catch {
+        setDatasets((prev) => prev.filter((d) => d.id !== id));
       }
-    },
-    [refreshDatasets]
-  );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "删除失败";
+      setError(msg);
+      throw err;
+    }
+  }, []);
 
-  // ── Refresh all data ────────────────────────────────────────────
+  // ── Set GitHub Token ──────────────────────────────────────────
+
+  const setGitHubToken = useCallback(async (token: string): Promise<boolean> => {
+    const valid = await validateToken(token);
+    if (valid) {
+      githubSetToken(token);
+      setHasGitHubToken(true);
+    }
+    return valid;
+  }, []);
+
+  const clearGitHubToken = useCallback(() => {
+    githubRemoveToken();
+    setHasGitHubToken(false);
+  }, []);
+
+  // ── Refresh all data ──────────────────────────────────────────
 
   const refreshAllData = useCallback(async () => {
     setIsLoading(true);
@@ -511,17 +522,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
         selectedDatasetIds,
         allDatasetIds,
         isAllSelected,
-        isStaticMode: IS_STATIC_EXPORT,
         datasets,
         isLoading,
         error,
+        hasGitHubToken,
         toggleDataset,
         selectAll,
         deselectAll,
-        loadDataset,
         uploadAndLoad,
         deleteDataset,
         refreshDatasets,
+        setGitHubToken,
+        clearGitHubToken,
         refreshAllData,
       }}
     >
@@ -530,7 +542,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ── Hook ──────────────────────────────────────────────────────────
+// ── Hook ────────────────────────────────────────────────────────
 
 export function useDataContext(): DataContextShape {
   const ctx = useContext(DataContext);

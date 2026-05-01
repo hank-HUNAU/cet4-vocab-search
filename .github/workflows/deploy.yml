@@ -29,11 +29,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Move API routes (incompatible with static export)
-        run: |
-          mkdir -p /tmp/api-backup
-          mv src/app/api /tmp/api-backup/
-
       - name: Build static site
         env:
           GITHUB_PAGES: "true"
@@ -42,11 +37,6 @@ jobs:
 
       - name: Add .nojekyll
         run: touch out/.nojekyll
-
-      - name: Restore API routes
-        run: |
-          mv /tmp/api-backup/api src/app/api
-        if: always()
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

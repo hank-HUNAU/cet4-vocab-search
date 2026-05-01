@@ -1252,10 +1252,14 @@ function DataUploadTab() {
     refreshDatasets,
     selectedDatasetIds,
     toggleDataset,
+    hasGitHubToken,
+    setGitHubToken,
+    clearGitHubToken,
   } = useDataContext();
 
   const [uploading, setUploading] = useState(false);
-  const [publishing, setPublishing] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [validating, setValidating] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     current: number;
     total: number;
@@ -1496,45 +1500,53 @@ function DataUploadTab() {
     }
   }, [pendingFiles, uploadAndLoad]);
 
-  // ── Publish to GitHub Pages ───────────────────────────────────────
-  const handlePublish = useCallback(async () => {
-    setPublishing(true);
+  // ── Set GitHub Token ────────────────────────────────────────────
+  const handleSetToken = useCallback(async () => {
+    if (!tokenInput.trim()) return;
+    setValidating(true);
     try {
-      const res = await fetch("/api/publish", { method: "POST" });
-      const json = await res.json();
-      if (json.success) {
-        toast.success("发布成功", { description: json.message });
+      const valid = await setGitHubToken(tokenInput.trim());
+      if (valid) {
+        toast.success("Token 验证成功");
+        setTokenInput("");
       } else {
-        toast.error("发布失败", { description: json.error || "发布失败" });
+        toast.error("Token 验证失败", { description: "请检查 Token 是否正确，以及是否有 repo 权限" });
       }
     } catch {
-      toast.error("发布请求失败");
+      toast.error("Token 验证请求失败");
     } finally {
-      setPublishing(false);
+      setValidating(false);
     }
-  }, []);
+  }, [tokenInput, setGitHubToken]);
 
   // ── Delete an uploaded dataset ────────────────────────────────────
   const handleDelete = useCallback(
     async (id: string, name: string) => {
-      if (!confirm(`确定删除数据集"${name}"？此操作不可撤销。`)) return;
+      if (!hasGitHubToken) {
+        toast.error("请先配置 GitHub Token");
+        return;
+      }
+      if (!confirm(`确定删除数据集"${name}"？此操作将删除GitHub仓库中的数据文件并触发重新部署。`)) return;
       try {
         await deleteDataset(id);
-        toast.success("删除成功", { description: `数据集"${name}"已删除` });
-      } catch {
-        toast.error("删除失败");
+        toast.success("删除成功", { description: `数据集"${name}"已从GitHub仓库删除，页面将在部署完成后自动更新` });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "删除失败";
+        toast.error("删除失败", { description: msg });
       }
     },
-    [deleteDataset]
+    [deleteDataset, hasGitHubToken]
   );
 
   // ── Export a dataset as JSON ──────────────────────────────────────
   const handleExport = useCallback(async (id: string, name: string) => {
     try {
-      const res = await fetch(`/api/datasets?id=${id}&withData=true`);
-      const json = await res.json();
-      if (json.success && json.data.data) {
-        const blob = new Blob([json.data.data], { type: "application/json" });
+      const basePath = window.location.pathname.startsWith("/cet4-vocab-search") ? "/cet4-vocab-search" : "";
+      const res = await fetch(`${basePath}/data/datasets/${id}.json`);
+      if (res.ok) {
+        const record = await res.json();
+        const dataStr = JSON.stringify(record.data, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -1571,30 +1583,56 @@ function DataUploadTab() {
 
   return (
     <div className="space-y-6">
-      {/* Publish to GitHub Pages */}
-      <Card className="border-purple-200 bg-gradient-to-r from-purple-50 to-pink-50 dark:border-purple-800 dark:from-purple-950/30 dark:to-pink-950/30">
+      {/* GitHub Token Configuration */}
+      <Card className={hasGitHubToken ? "border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 dark:border-green-800 dark:from-green-950/30 dark:to-emerald-950/30" : "border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 dark:border-amber-800 dark:from-amber-950/30 dark:to-orange-950/30"}>
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-gradient-to-br from-purple-600 to-pink-600 text-white">
+              <div className={`p-2.5 rounded-lg text-white ${hasGitHubToken ? "bg-gradient-to-br from-green-600 to-emerald-600" : "bg-gradient-to-br from-amber-600 to-orange-600"}`}>
                 <Rocket className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-semibold text-foreground">发布到 GitHub Pages</h3>
+                <h3 className="font-semibold text-foreground">
+                  {hasGitHubToken ? "GitHub 管理已连接" : "配置 GitHub Personal Access Token"}
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  将所有数据集合并并发布到公开站点，触发 GitHub Actions 自动部署
+                  {hasGitHubToken
+                    ? "已配置Token，可以通过GitHub API管理仓库中的数据文件，上传和删除操作将自动触发GitHub Actions重新部署"
+                    : "需要配置GitHub PAT才能上传和删除数据，Token需要有repo权限，数据变更将自动触发GitHub Pages重新部署"}
                 </p>
               </div>
             </div>
-            <Button
-              onClick={handlePublish}
-              disabled={publishing || datasets.length === 0}
-              className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shrink-0"
-            >
-              {publishing ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Rocket className="h-4 w-4 mr-2" />}
-              {publishing ? "正在发布..." : "发布到 GitHub Pages"}
-            </Button>
+            {hasGitHubToken && (
+              <Button
+                onClick={() => { clearGitHubToken(); toast.info("Token 已清除"); }}
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+              >
+                清除Token
+              </Button>
+            )}
           </div>
+          {!hasGitHubToken && (
+            <div className="mt-4 flex gap-2">
+              <Input
+                type="password"
+                placeholder="输入 GitHub Personal Access Token (需要 repo 权限)"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSetToken(); }}
+                className="flex-1"
+              />
+              <Button
+                onClick={handleSetToken}
+                disabled={validating || !tokenInput.trim()}
+                className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white shrink-0"
+              >
+                {validating ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Rocket className="h-4 w-4 mr-2" />}
+                {validating ? "验证中..." : "验证并保存"}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1996,56 +2034,32 @@ function DataUploadTab() {
         </CardContent>
       </Card>
 
-      {/* API Documentation */}
+      {/* GitHub API Documentation */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <FileText className="h-4 w-4 text-teal-600" />
-            接口文档
+            数据管理说明
           </CardTitle>
-          <CardDescription>JSON上传与数据集管理API说明</CardDescription>
+          <CardDescription>基于GitHub Contents API的数据管理机制</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-green-600 text-white text-xs">
-                  POST
-                </Badge>
-                <code className="text-sm font-mono">/api/upload</code>
-              </div>
-              <p className="text-xs text-muted-foreground pl-16">
-                上传JSON文件（multipart/form-data），支持字段：file(必须)、name、description、tags
-              </p>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <div className="flex items-start gap-2">
+              <Badge className="bg-teal-600 text-white text-xs mt-0.5 shrink-0">数据存储</Badge>
+              <span>所有数据集以JSON文件形式存储在GitHub仓库的 <code className="text-xs font-mono bg-muted px-1 rounded">public/data/datasets/</code> 目录中，索引文件为 <code className="text-xs font-mono bg-muted px-1 rounded">public/data/index.json</code></span>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-blue-600 text-white text-xs">GET</Badge>
-                <code className="text-sm font-mono">/api/datasets</code>
-              </div>
-              <p className="text-xs text-muted-foreground pl-16">
-                查询数据集列表，参数：id、search、page、pageSize、withData
-              </p>
+            <div className="flex items-start gap-2">
+              <Badge className="bg-amber-600 text-white text-xs mt-0.5 shrink-0">上传机制</Badge>
+              <span>上传文件时，通过GitHub Contents API将数据写入仓库，自动触发GitHub Actions构建和部署GitHub Pages静态站点</span>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-amber-600 text-white text-xs">PUT</Badge>
-                <code className="text-sm font-mono">/api/datasets</code>
-              </div>
-              <p className="text-xs text-muted-foreground pl-16">
-                更新数据集元信息，Body: {"{ id, name, description, tags }"}
-              </p>
+            <div className="flex items-start gap-2">
+              <Badge className="bg-red-600 text-white text-xs mt-0.5 shrink-0">删除机制</Badge>
+              <span>删除数据集时，通过GitHub Contents API从仓库中删除对应文件并更新索引，同样自动触发重新部署</span>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-red-600 text-white text-xs">
-                  DELETE
-                </Badge>
-                <code className="text-sm font-mono">/api/datasets?id=xxx</code>
-              </div>
-              <p className="text-xs text-muted-foreground pl-16">
-                删除指定数据集
-              </p>
+            <div className="flex items-start gap-2">
+              <Badge className="bg-purple-600 text-white text-xs mt-0.5 shrink-0">权限要求</Badge>
+              <span>GitHub Personal Access Token需要有 <code className="text-xs font-mono bg-muted px-1 rounded">repo</code> 权限才能读写仓库文件。Token仅存储在浏览器localStorage中，不会发送到任何第三方服务器</span>
             </div>
           </div>
         </CardContent>

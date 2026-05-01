@@ -4,7 +4,7 @@ const isGitHubPages = process.env.GITHUB_PAGES === "true";
 
 const nextConfig: NextConfig = {
   // GitHub Pages: static export with basePath
-  // Local dev / space-z.ai: standalone server mode
+  // Local dev: standalone server mode (for development only)
   output: isGitHubPages ? "export" : "standalone",
   basePath: isGitHubPages ? "/cet4-vocab-search" : "",
   assetPrefix: isGitHubPages ? "/cet4-vocab-search/" : undefined,
