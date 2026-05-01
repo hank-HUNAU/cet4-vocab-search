@@ -36,7 +36,6 @@ yarn-error.log*
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -48,7 +47,33 @@ dev.log
 dev.out.log
 test
 prompt
-
 server.log
-# Skills directory
+
+# Skills directory (system files, not project code)
 /skills/
+
+# Database files (SQLite)
+/db/
+*.db
+*.db-journal
+
+# Upload directory (user-uploaded data files)
+/upload/
+
+# Download directory (generated output files)
+/download/
+
+# Agent context files
+/agent-ctx/
+
+# Z-scripts runtime files
+.zscripts/dev.pid
+
+# Development worklog
+worklog.md
+
+# Mini-services (not part of CET4 project)
+/mini-services/
+
+# Examples
+/examples/
