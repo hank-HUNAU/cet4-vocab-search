@@ -13,6 +13,12 @@ import {
 import { type CET4Data } from "@/data/cet4-data";
 import { enrichCET4Data, normalizeToCET4Data } from "@/lib/cet4-utils";
 
+// ─── Detect static deployment (GitHub Pages) ──────────────────────
+// When running on GitHub Pages, API routes are unavailable.
+// We detect this by checking if the basePath prefix is present.
+
+const IS_STATIC_EXPORT = typeof window !== "undefined" && process.env.NODE_ENV === "production" && !window.location.hostname.includes("space-z.ai") && !window.location.hostname.includes("localhost");
+
 // ─── Dataset type (matches the API response) ────────────────────────
 
 export interface DatasetItem {
@@ -81,6 +87,8 @@ interface DataContextShape {
   allDatasetIds: string[];
   /** Whether all datasets are selected */
   isAllSelected: boolean;
+  /** Whether running in static export mode (GitHub Pages) */
+  isStaticMode: boolean;
   /** List of uploaded datasets (without full data payload) */
   datasets: DatasetItem[];
   /** Loading state for data operations */
@@ -228,9 +236,52 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // ── Load static fallback data (for GitHub Pages) ─────────────────
+
+  const loadStaticFallbackData = useCallback(async (): Promise<boolean> => {
+    try {
+      // Determine basePath for static export
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+      const res = await fetch(`${basePath}/data/sample.json`);
+      if (!res.ok) return false;
+      const rawParsed = await res.json();
+      const normalized = normalizeToCET4Data(rawParsed);
+      if (!normalized || !normalized.sets || normalized.sets.length === 0) return false;
+
+      const staticId = "__static_sample__";
+      setDatasetDataMap(new Map([[staticId, normalized]]));
+      setSelectedDatasetIds(new Set([staticId]));
+      setDatasets([
+        {
+          id: staticId,
+          name: normalized.metadata?.exam_year ? `CET4 ${normalized.metadata.exam_year}年${normalized.metadata.exam_month}月` : "CET4 示例数据",
+          fileName: "sample.json",
+          fileType: "json",
+          fileSize: 0,
+          examYear: normalized.metadata?.exam_year || null,
+          examMonth: normalized.metadata?.exam_month || null,
+          totalSets: normalized.sets.length,
+          description: "静态示例数据（GitHub Pages 模式）",
+          tags: "示例",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      return true;
+    } catch (err) {
+      console.error("Failed to load static fallback data:", err);
+      return false;
+    }
+  }, []);
+
   // ── Refresh dataset list ────────────────────────────────────────
 
   const refreshDatasets = useCallback(async () => {
+    // Static export mode: load from static JSON file
+    if (IS_STATIC_EXPORT) {
+      await loadStaticFallbackData();
+      return;
+    }
+
     try {
       const res = await fetch("/api/datasets");
       const json = await res.json();
@@ -264,9 +315,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch {
-      console.error("Failed to fetch datasets");
+      // API failed — try static fallback
+      console.warn("API unavailable, trying static fallback data...");
+      await loadStaticFallbackData();
     }
-  }, [loadDatasetData]);
+  }, [loadDatasetData, loadStaticFallbackData]);
 
   // Load datasets on mount
   const mountedRef = useRef(false);
@@ -458,6 +511,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         selectedDatasetIds,
         allDatasetIds,
         isAllSelected,
+        isStaticMode: IS_STATIC_EXPORT,
         datasets,
         isLoading,
         error,
